@@ -1,40 +1,22 @@
-# New Project Template
+# Binding free energy calculations pipeline on GCP with Gromacs
 
-This repository contains a template that can be used to seed a repository for a
-new Google open source project.
+This repository will contain the pipeline developed by Google Research, the Max Planck Institute for Multidisciplinary Sciences, and Janssen, to carry out protein-ligand binidng free energy calculations using Gromacs and Google Cloud.
 
-See [go/releasing](http://go/releasing) (available externally at
-https://opensource.google/docs/releasing/) for more information about
-releasing a new Google open source project.
+Additionally, this repo will contain the results and analyses of the calculations that will be carried out as part of the project.
 
-This template uses the Apache license, as is Google's default.  See the
-documentation for instructions on using alternate license.
+## Disclaimer
 
-## How to use this template
+This is not an official Google product.
 
-1. Clone it from GitHub.
-    * There is no reason to fork it.
-1. Create a new local repository and copy the files from this repo into it.
-1. Modify README.md and docs/contributing.md to represent your project, not the
-   template project.
-1. Develop your new project!
+## Notes/reminders on development
 
-``` shell
-git clone https://github.com/google/new-project
-mkdir my-new-thing
-cd my-new-thing
-git init
-cp -r ../new-project/* ../new-project/.github .
-git add *
-git commit -a -m 'Boilerplate for new Google open source project'
-```
+### Third party
+If we need to include any third party code, it will have to go in the ``third_party`` folder and include its license.
 
-## Source Code Headers
+### Source Code Headers
 
 Every file containing source code must include copyright and license
-information. This includes any JS/CSS files that you might be serving out to
-browsers. (This is to help well-intentioned people avoid accidental copying that
-doesn't comply with the license.)
+information.
 
 Apache header:
 
