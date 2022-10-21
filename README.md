@@ -6,7 +6,7 @@ Additionally, this repo will contain the results and analyses of the calculation
 
 ## Disclaimer
 
-This is not an official Google product.
+This is not an officially supported Google product.
 
 ## Notes/reminders on development
 
