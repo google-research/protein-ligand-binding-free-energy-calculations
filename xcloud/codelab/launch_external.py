@@ -1,9 +1,10 @@
 r"""Launcher for running ABFE codelab with a --xm_gcs_path arg.
 
-Please upload a TPR file to a GCS bucket. In this example, external_xmanager_staging
-gs bucket is used for illustrative purpose.
+This script allows external user to launch a XManager job on Google Cloud project to run
+GROMACS molecular dynamics simulation. The benchmark simulation files and Docker image
+are prepared in Google Cloud bucket as an illustrative example.
 
-Pass the gcs path with the flag --xm_gcs_path.
+Pass the Google Cloud bucket path with the flag --xm_gcs_path.
 
 Usage:
 
