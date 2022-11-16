@@ -94,7 +94,7 @@ def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
                                     '-bonded': _bonded,
                                     '-ntmpi': str(_NUM_MPI.value),
                                     '-ntomp': str(_NUM_THREADS.value),
-                                    '-pin': 'on'
+                                    '-pin': 'on',
                                     '-x': f'{path}/traj_{n}.xtc',
                                     '-o': f'{path}/traj_{n}.trr',
                                     '-c': f'{path}/confout_{n}.gro',
@@ -112,7 +112,7 @@ def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
                                     '-bonded': _bonded,
                                     '-ntmpi': str(_NUM_MPI.value),
                                     '-ntomp': str(_NUM_THREADS.value),
-                                    '-pin': 'on'
+                                    '-pin': 'on',
                                     '-x': f'{path}/traj.xtc',
                                     '-o': f'{path}/traj.trr',
                                     '-c': f'{path}/confout.gro',
@@ -198,22 +198,21 @@ def run_all_tprs(tpr_files, pmegpu=True, transition=False):
     _ = mdrun(tpr_file, pmegpu=pmegpu, nsteps=None)
 
 
-def prepare_output_directory(mdp_path, top_path, prot_dir, lig_dir, out_path, n_repeats=5):
-  #@title 1.1&nbsp; Setup folder structure
+def setup_abfe_obj_and_output_dir():
 
   # Initialize the free energy environment object. It will store the main 
   # parameters for the calculations.
-  fe = AbsoluteDG(mdpPath=mdp_path,  # Path to the MDP files.
-                  structTopPath=top_path,  # Path to structures and topologies.
-                  ligList=[lig_dir],  # Folders with protein-ligand input files.
-                  apoCase=prot_dir,  # Folders with protein files.
+  fe = AbsoluteDG(mdpPath=_MDP_PATH.value,  # Path to the MDP files.
+                  structTopPath=_TOP_PATH.value,  # Path to structures and topologies.
+                  ligList=[_LIG_DIR.value],  # Folders with protein-ligand input files.
+                  apoCase=_PROT_DIR.value,  # Folders with protein files.
                   bDSSB=False,
                   gmxexec='/usr/local/gromacs/bin/gmx')
 
   # Set the workpath in which simulation input files will be created.
-  fe.workPath = out_path
+  fe.workPath = _OUT_PATH.value
   # Set the number of replicas (i.e., number of equilibrium simulations per state).
-  fe.replicas = n_repeats
+  fe.replicas = _N_REPEATS.value
 
   # Prepare the directory structure with all simulations steps required.
   fe.simTypes = ['em',  # Energy minimization.
@@ -240,12 +239,7 @@ def main(_):
   flags.mark_flag_as_required('lig_dir')
 
   logging.info('Instantiate AbsoluteDG object.')
-  fe = prepare_output_directory(_MDP_PATH.value, 
-                                _TOP_PATH.value, 
-                                _PROT_DIR.value, 
-                                _LIG_DIR.value, 
-                                _OUT_PATH.value, 
-                                _N_REPEATS.value)
+  fe = setup_abfe_obj_and_output_dir()
 
   logging.info('Change workdir to %s', _OUT_PATH.value)
   os.chdir(_OUT_PATH.value)
