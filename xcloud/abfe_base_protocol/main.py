@@ -92,6 +92,9 @@ def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
                                     '-pme': _pme, 
                                     '-pmefft': _pmefft, 
                                     '-bonded': _bonded,
+                                    '-ntmpi': str(_NUM_MPI.value),
+                                    '-ntomp': str(_NUM_THREADS.value),
+                                    '-pin': 'on'
                                     '-x': f'{path}/traj_{n}.xtc',
                                     '-o': f'{path}/traj_{n}.trr',
                                     '-c': f'{path}/confout_{n}.gro',
@@ -107,6 +110,9 @@ def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
                                     '-pme': _pme, 
                                     '-pmefft': _pmefft, 
                                     '-bonded': _bonded,
+                                    '-ntmpi': str(_NUM_MPI.value),
+                                    '-ntomp': str(_NUM_THREADS.value),
+                                    '-pin': 'on'
                                     '-x': f'{path}/traj.xtc',
                                     '-o': f'{path}/traj.trr',
                                     '-c': f'{path}/confout.gro',
@@ -182,14 +188,14 @@ def mdrun_completed(tpr: str, transition: bool = False) -> bool:
       return False
 
 
-def run_all_tprs(tpr_files, transition=False):
+def run_all_tprs(tpr_files, pmegpu=True, transition=False):
   for tpr_file in tpr_files:
     # If minimization has been run already, skip.
-    if mdrun_completed(tpr_file):
+    if mdrun_completed(tpr_file=tpr_files, transition=transition):
       print(f"`{tpr_file}` already ran successfully")
       continue
     # Run the simulation (with reduced number of steps if needed)
-    _ = mdrun(tpr_file, pmegpu=False, nsteps=None)
+    _ = mdrun(tpr_file, pmegpu=pmegpu, nsteps=None)
 
 
 def prepare_output_directory(mdp_path, top_path, prot_dir, lig_dir, out_path, n_repeats=5):
@@ -257,22 +263,22 @@ def main(_):
   logging.info('Run energy minimization.')
   tpr_files = fe.prepare_simulation(simType='em')
   # Read the TPR files and run all minimizations.
-  run_all_tprs(tpr_files, transition=False)
+  run_all_tprs(tpr_files, pmegpu=False, transition=False)
   
   # Short equilibrations.
   logging.info('Run equilibration.')
   tpr_files = fe.prepare_simulation(simType='eq_posre', prevSim='em')
-  run_all_tprs(tpr_files, transition=False)
+  run_all_tprs(tpr_files, pmegpu=True, transition=False)
   
   # Equilibrium simulations.
   logging.info('Run production equilibrium simulations.')
   tpr_files = fe.prepare_simulation(simType='eq', prevSim='eq_posre')
-  run_all_tprs(tpr_files, transition=False)
+  run_all_tprs(tpr_files, pmegpu=True, transition=False)
 
   # Non-equilibrium simulations.
   logging.info('Run alchemical transitions.')
   tpr_files = fe.prepare_simulation(simType='transitions')
-  run_all_tprs(tpr_files, transition=True)
+  run_all_tprs(tpr_files, pmegpu=True, transition=True)
   
   # Analysis.
   logging.info('Analyze results.')
