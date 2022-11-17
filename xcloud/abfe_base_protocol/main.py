@@ -207,7 +207,7 @@ def setup_abfe_obj_and_output_dir():
                   ligList=[_LIG_DIR.value],  # Folders with protein-ligand input files.
                   apoCase=_PROT_DIR.value,  # Folders with protein files.
                   bDSSB=False,
-                  gmxexec='/usr/local/gromacs/bin/gmx')
+                  gmxexec=gmxapi.commandline.cli_executable().as_posix())
 
   # Set the workpath in which simulation input files will be created.
   fe.workPath = _OUT_PATH.value
