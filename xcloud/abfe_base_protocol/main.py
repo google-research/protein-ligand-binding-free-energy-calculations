@@ -139,7 +139,7 @@ def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
   return md
 
 
-def mdrun_completed(tpr: str, transition: bool = False) -> bool:
+def mdrun_completed(tpr_file: str, transition: bool = False) -> bool:
   """Checks whether energy minimization completed successfully.
   
   Args:
@@ -156,12 +156,12 @@ def mdrun_completed(tpr: str, transition: bool = False) -> bool:
   # completed.
   if transition:
     # Get the index of the transition.
-    n = int(tpr.split('/')[-1].split('.')[0].replace('ti', ''))
+    n = int(tpr_file.split('/')[-1].split('.')[0].replace('ti', ''))
     # Get dhdl file path.
-    dhdl = "/".join(tpr.split("/")[:-1]) + f"/dhdl_{n}.xvg"
+    dhdl = "/".join(tpr_file.split("/")[:-1]) + f"/dhdl_{n}.xvg"
     # If dhdl file exists, check it's complete.
     if os.path.isfile(dhdl):
-      input_tpr = gmxapi.read_tpr(tpr)
+      input_tpr = gmxapi.read_tpr(tpr_file)
       nsteps = input_tpr.output.parameters.result()['nsteps']
       dt = input_tpr.output.parameters.result()['dt']
       expected_final_time = nsteps * dt
@@ -181,7 +181,7 @@ def mdrun_completed(tpr: str, transition: bool = False) -> bool:
     # (maldeghi): IIRC Gromacs would output the GRO file only for mdruns that
     # did not crash/errored. We can make this stricted by checking the log
     # file too.
-    gro = "/".join(tpr.split("/")[:-1]) + "/confout.gro"
+    gro = "/".join(tpr_file.split("/")[:-1]) + "/confout.gro"
     if os.path.isfile(gro):
       return True
     else:
@@ -191,7 +191,7 @@ def mdrun_completed(tpr: str, transition: bool = False) -> bool:
 def run_all_tprs(tpr_files, pmegpu=True, transition=False):
   for tpr_file in tpr_files:
     # If minimization has been run already, skip.
-    if mdrun_completed(tpr_file=tpr_files, transition=transition):
+    if mdrun_completed(tpr_file=tpr_file, transition=transition):
       print(f"`{tpr_file}` already ran successfully")
       continue
     # Run the simulation (with reduced number of steps if needed)
