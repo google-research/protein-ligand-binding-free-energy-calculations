@@ -10,11 +10,13 @@ import time
 from absl import app
 from absl import flags
 from absl import logging
+logging.use_absl_handler()
 
 import gmxapi
 
 import numpy as np
 from pmx.AbsoluteDG import AbsoluteDG
+
 
 _MDP_PATH = flags.DEFINE_string('mdp_path', None, 'Path to MDP files.')
 _TOP_PATH = flags.DEFINE_string('top_path', None, 'Path to GRO/TOP files.')
@@ -27,6 +29,8 @@ _NUM_MPI = flags.DEFINE_integer('num_mpi', 1,
                                 'The number of thread-MPI processes.')
 _NUM_THREADS = flags.DEFINE_integer('num_threads', 4,
                                     'The number of OpenMP threads.')
+_LOG_LEVEL = flags.DEFINE_string('log_level', 'INFO', 'Set level for logging '
+                                 '(DEBUG, INFO, ERROR). Default is "INFO".')
 
 # Sets a session ID for this session.
 _SESSION_ID = str(int(time.time()))
@@ -192,10 +196,11 @@ def run_all_tprs(tpr_files, pmegpu=True, transition=False):
   for tpr_file in tpr_files:
     # If minimization has been run already, skip.
     if mdrun_completed(tpr_file=tpr_file, transition=transition):
-      print(f"`{tpr_file}` already ran successfully")
+      logging.info(f"  `{tpr_file}` already ran ==> skipping mdrun.")
       continue
     # Run the simulation (with reduced number of steps if needed)
-    _ = mdrun(tpr_file, pmegpu=pmegpu, nsteps=None)
+    logging.info(f'  `{tpr_file}` ==> executing mdrun.')
+    _ = mdrun(tpr_file, pmegpu=pmegpu, nsteps=None, transition=transition)
 
 
 def setup_abfe_obj_and_output_dir():
@@ -231,52 +236,67 @@ def setup_abfe_obj_and_output_dir():
 
 
 def main(_):
-  logging.info('Job started.')
   
   flags.mark_flag_as_required('mdp_path')
   flags.mark_flag_as_required('top_path')
   flags.mark_flag_as_required('out_path')
   flags.mark_flag_as_required('lig_dir')
 
-  logging.info('Instantiate AbsoluteDG object.')
+  # Set up logger.
+  _log_level = {
+      'DEBUG': logging.DEBUG,
+      'INFO': logging.INFO,
+      'ERROR': logging.ERROR
+  }
+
+  # We call this first to create the folder for the job, and place the log
+  # file in this path.
   fe = setup_abfe_obj_and_output_dir()
 
-  logging.info('Change workdir to %s', _OUT_PATH.value)
+  logging.get_absl_handler().use_absl_log_file('abfe', f'{_OUT_PATH.value}/{_LIG_DIR.value}/') 
+  flags.FLAGS.mark_as_parsed() 
+  logging.set_verbosity(_log_level[_LOG_LEVEL.value])
+
+  logging.info('===== New ABFE job started =====')
+  logging.info('AbsoluteDG object has been instantiated.')
+  logging.info('Changing workdir to %s', _OUT_PATH.value)
   os.chdir(_OUT_PATH.value)
 
-  logging.info('Assemble simulation systems.')
+  logging.info('Assembling simulation systems.')
   # Assemble the systems: build Gromacs structure and topology for the 
   # ligand+water and ligand+protein+water systems.
   fe.assemble_systems()
 
   # Define the simulation boxes, fill them with water molecules, and add ions to 
   # neutralize the system and reach desired NaCl concentration (0.15 M by default).
+  logging.info('Building simulation box.')
   fe.boxWaterIons()
 
   # Energy minimization.
-  logging.info('Run energy minimization.')
+  logging.info('Running energy minimizations.')
   tpr_files = fe.prepare_simulation(simType='em')
   # Read the TPR files and run all minimizations.
   run_all_tprs(tpr_files, pmegpu=False, transition=False)
   
   # Short equilibrations.
-  logging.info('Run equilibration.')
+  logging.info('Running equilibration.')
   tpr_files = fe.prepare_simulation(simType='eq_posre', prevSim='em')
   run_all_tprs(tpr_files, pmegpu=True, transition=False)
   
   # Equilibrium simulations.
-  logging.info('Run production equilibrium simulations.')
+  logging.info('Running production equilibrium simulations.')
   tpr_files = fe.prepare_simulation(simType='eq', prevSim='eq_posre')
   run_all_tprs(tpr_files, pmegpu=True, transition=False)
 
   # Non-equilibrium simulations.
-  logging.info('Run alchemical transitions.')
+  logging.info('Running alchemical transitions.')
   tpr_files = fe.prepare_simulation(simType='transitions')
   run_all_tprs(tpr_files, pmegpu=True, transition=True)
   
   # Analysis.
-  logging.info('Analyze results.')
+  logging.info('Analyzing results.')
   fe.run_analysis(ligs=[_LIG_DIR.value])
+  fe.analysis_summary(ligs=[_LIG_DIR.value])
   df_results = fe.resultsSummary
   df_results.to_csv(f"{_OUT_PATH.value}/results.csv", index=False)
 
