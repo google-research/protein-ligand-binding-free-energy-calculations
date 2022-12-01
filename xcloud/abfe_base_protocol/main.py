@@ -6,6 +6,7 @@ to modification.
 
 import os
 import time
+import subprocess
 
 from absl import app
 from absl import flags
@@ -32,24 +33,8 @@ _NUM_THREADS = flags.DEFINE_integer('num_threads', 4,
 _LOG_LEVEL = flags.DEFINE_string('log_level', 'INFO', 'Set level for logging '
                                  '(DEBUG, INFO, ERROR). Default is "INFO".')
 
-# Sets a session ID for this session.
-_SESSION_ID = str(int(time.time()))
 
-
-# Monkey patch this session ID into the gmxapi.operation.ResourceManager.
-# Hack. Do not use in the user code.
-# This is temporarily added to allow users to start from a new set of working
-# directories for all the mdrun launches. GMX API doesn't expose the
-# underlying resource manager or context yet.
-def operation_id(self):
-  # pylint: disable=protected-access
-  return f'{self._base_operation_id}_{_SESSION_ID}'
-
-
-gmxapi.operation.ResourceManager.operation_id = property(operation_id)
-
-
-def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
+def mdrun(tpr, pmegpu=True, transition=False):
   """Wrapper for gmxapi.mdrun with predefined scenarios optimized for different 
   types of simulations.
 
@@ -57,20 +42,15 @@ def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
     tpr (str): path to TPR file.
     pmegpu (bool): whether to run PME calculations on the GPU. Default is True.
       Note this is not possible with certain integrators.
-    nsteps (int): number of integration steps to run, overwrites nsteps defined
-      by the MDP file used to generate the TPR. Default is None (do not modify 
-      TPR).
     transition (bool): whether we are running a non-equilibrium transition. 
       Default is False.
 
   Returns:
     object: StandardOperationHandle returned by gmxapi.mdrun.
   """
-  # Load TPR file.
-  input_tpr = gmxapi.read_tpr(tpr)
-  if nsteps is not None:
-    input_tpr = gmxapi.modify_input(input=input_tpr, 
-                                    parameters={'nsteps': nsteps})    
+
+  # Get gmx executable.
+  gmxexec = gmxapi.commandline.cli_executable().as_posix()
 
   # Get path to TPR.
   path = "/".join(tpr.split('/')[:-1])
@@ -91,43 +71,44 @@ def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
   # determine if the simulation has been ran already.
   if transition:
     n = int(tpr.split('/')[-1].split('.')[0].replace('ti', ''))
-    md = gmxapi.mdrun(input_tpr,
-                      runtime_args={'-nb': 'gpu', 
-                                    '-pme': _pme, 
-                                    '-pmefft': _pmefft, 
-                                    '-bonded': _bonded,
-                                    '-ntmpi': str(_NUM_MPI.value),
-                                    '-ntomp': str(_NUM_THREADS.value),
-                                    '-pin': 'on',
-                                    '-x': f'{path}/traj_{n}.xtc',
-                                    '-o': f'{path}/traj_{n}.trr',
-                                    '-c': f'{path}/confout_{n}.gro',
-                                    '-e': f'{path}/ener_{n}.edr', 
-                                    '-g': f'{path}/md_{n}.log',
-                                    '-cpo': f'{path}/state_{n}.cpt',
-                                    '-dhdl': f'{path}/dhdl_{n}.xvg'
-                                    }
-                      )
-  else:
-    md = gmxapi.mdrun(input_tpr,
-                      runtime_args={'-nb': 'gpu', 
-                                    '-pme': _pme, 
-                                    '-pmefft': _pmefft, 
-                                    '-bonded': _bonded,
-                                    '-ntmpi': str(_NUM_MPI.value),
-                                    '-ntomp': str(_NUM_THREADS.value),
-                                    '-pin': 'on',
-                                    '-x': f'{path}/traj.xtc',
-                                    '-o': f'{path}/traj.trr',
-                                    '-c': f'{path}/confout.gro',
-                                    '-e': f'{path}/ener.edr', 
-                                    '-g': f'{path}/md.log',
-                                    '-cpo': f'{path}/state.cpt'
-                                    }
-                      )
 
-  # Run the simulation.
-  md.run()
+    subprocess.call([f'{gmxexec}', 'mdrun',
+                     '-s', f'{tpr}',
+                     '-x', f'{path}/traj_{n}.xtc',
+                     '-o', f'{path}/traj_{n}.trr',
+                     '-c', f'{path}/confout_{n}.gro',
+                     '-e', f'{path}/ener_{n}.edr',
+                     '-g', f'{path}/md_{n}.log',
+                     '-cpo', f'{path}/state_{n}.cpt',
+                     '-dhdl', f'{path}/dhdl_{n}.xvg',
+                     '-nb', 'gpu',
+                     '-pme', _pme,
+                     '-pmefft', _pmefft,
+                     '-bonded', _bonded,
+                     '-ntmpi', str(_NUM_MPI.value),
+                     '-ntomp', str(_NUM_THREADS.value),
+                     '-pin', 'on'],
+                     stdout=subprocess.DEVNULL,
+                     stderr=subprocess.STDOUT)
+  else:
+    subprocess.call([f'{gmxexec}', 'mdrun',
+                     '-s', f'{tpr}',
+                     '-x', f'{path}/traj.xtc',
+                     '-o', f'{path}/traj.trr',
+                     '-c', f'{path}/confout.gro',
+                     '-e', f'{path}/ener.edr',
+                     '-g', f'{path}/md.log',
+                     '-cpo', f'{path}/state.cpt',
+                     '-dhdl', f'{path}/dhdl.xvg',
+                     '-nb', 'gpu',
+                     '-pme', _pme,
+                     '-pmefft', _pmefft,
+                     '-bonded', _bonded,
+                     '-ntmpi', str(_NUM_MPI.value),
+                     '-ntomp', str(_NUM_THREADS.value),
+                     '-pin', 'on'],
+                     stdout=subprocess.DEVNULL,
+                     stderr=subprocess.STDOUT)
 
   # If transition, clean up files we won't need.
   if transition:
@@ -139,8 +120,6 @@ def mdrun(tpr, pmegpu=True, nsteps=None, transition=False):
               f'{path}/state_{n}.cpt']:
       if os.path.isfile(f):
         os.remove(f)
-
-  return md
 
 
 def mdrun_completed(tpr_file: str, transition: bool = False) -> bool:
@@ -192,15 +171,27 @@ def mdrun_completed(tpr_file: str, transition: bool = False) -> bool:
       return False
 
 
+def run_tpr(tpr_file, pmegpu, transition, max_restarts):
+  logging.info(f'  --> {tpr_file}')
+  num_restarts = 0
+  done = mdrun_completed(tpr_file=tpr_file, transition=transition)
+  while not done and num_restarts <= max_restarts:
+    # Run the simulation. If previous attempt failed
+    logging.info(f'  ... executing mdrun')
+    num_restarts += 1
+    mdrun(tpr_file, pmegpu=pmegpu, transition=transition)
+    # Check if simulation completed successfully.
+    done = mdrun_completed(tpr_file=tpr_file, transition=transition)
+  
+  if done:
+    logging.info(f"  ... mdrun completed successfully")
+  else:
+    logging.info(f"  !!! max restarts ({max_restarts}) reached, mdrun did not complete successfully")
+
+
 def run_all_tprs(tpr_files, pmegpu=True, transition=False):
   for tpr_file in tpr_files:
-    # If minimization has been run already, skip.
-    if mdrun_completed(tpr_file=tpr_file, transition=transition):
-      logging.info(f"  `{tpr_file}` already ran ==> skipping mdrun.")
-      continue
-    # Run the simulation (with reduced number of steps if needed)
-    logging.info(f'  `{tpr_file}` ==> executing mdrun.')
-    _ = mdrun(tpr_file, pmegpu=pmegpu, nsteps=None, transition=transition)
+    run_tpr(tpr_file, pmegpu, transition, max_restarts=2)
 
 
 def setup_abfe_obj_and_output_dir():
