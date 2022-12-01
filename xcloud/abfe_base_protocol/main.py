@@ -1,21 +1,15 @@
-r"""The main program for running gromacs simulation with a TPR input.
-
-This module is simply for testing running gromacs with XCloud and it is subject
-to modification.
+r"""The main program for running gromacs ABFE calculations with
+a non-equilibrium protocol using .
 """
 
 import os
-import time
 import subprocess
 
 from absl import app
 from absl import flags
 from absl import logging
-logging.use_absl_handler()
 
 import gmxapi
-
-import numpy as np
 from pmx.AbsoluteDG import AbsoluteDG
 
 
@@ -216,6 +210,16 @@ def setup_abfe_obj_and_output_dir():
                 'eq',  # Equilibrium simulation.
                 'transitions']  # Alchemical, non-equilibrium simulations.
 
+  # Specify the number of equivalent poses available for the ligand due to 
+  # simmetry, and which we are unlikely to sample during the simulations due to 
+  # the definition of the restraints. 
+  # For non-symmetric ligands, this is 1, resulting in no correction. 
+  # For e.g., benzene, this can be 2 if rotations around
+  # the C6 axis are allowed but ring flips are not. 
+  # This choice is not straightforward, but chances are it won't matter much 
+  # for our purposes of discriminating binders from non-binders.
+  fe.ligSymmetry = 1
+
   # ps to discard from equilibrium simulations when preparing the input for 
   # the non-equilibrium ones.
   fe.equilTime = 2000.
@@ -288,8 +292,10 @@ def main(_):
   logging.info('Analyzing results.')
   fe.run_analysis(ligs=[_LIG_DIR.value])
   fe.analysis_summary(ligs=[_LIG_DIR.value])
-  df_results = fe.resultsSummary
-  df_results.to_csv(f"{_OUT_PATH.value}/results.csv", index=False)
+  # Write results to file.
+  fe.resultsSummary.to_csv(f"{_OUT_PATH.value}/results.csv", index=False)
+  # Write breakdown of all terms contributing to overall dG.
+  fe.resultsAll.to_csv(f"{_OUT_PATH.value}/dg_terms.csv", index=False)
 
   logging.info('Job completed.')
 
