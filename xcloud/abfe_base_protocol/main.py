@@ -110,7 +110,6 @@ def mdrun(tpr, pmegpu=True, transition=False):
               f'{path}/traj_{n}.trr', 
               f'{path}/confout_{n}.gro', 
               f'{path}/ener_{n}.edr', 
-              f'{path}/md_{n}.log',  
               f'{path}/state_{n}.cpt']:
       if os.path.isfile(f):
         os.remove(f)
