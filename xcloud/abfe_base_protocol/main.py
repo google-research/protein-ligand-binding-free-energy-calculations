@@ -247,7 +247,7 @@ def main(_):
   # file in this path.
   fe = setup_abfe_obj_and_output_dir()
 
-  logging.get_absl_handler().use_absl_log_file('abfe', f'{_OUT_PATH.value}/{_LIG_DIR.value}/') 
+  logging.get_absl_handler().use_absl_log_file(log_dir=f'{_OUT_PATH.value}/{_LIG_DIR.value}/')
   flags.FLAGS.mark_as_parsed() 
   logging.set_verbosity(_log_level[_LOG_LEVEL.value])
 
