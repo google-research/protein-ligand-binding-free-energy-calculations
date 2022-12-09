@@ -4,6 +4,7 @@ a non-equilibrium protocol using .
 
 import os
 import subprocess
+import time
 
 from absl import app
 from absl import flags
@@ -17,7 +18,7 @@ _MDP_PATH = flags.DEFINE_string('mdp_path', None, 'Path to MDP files.')
 _TOP_PATH = flags.DEFINE_string('top_path', None, 'Path to GRO/TOP files.')
 _OUT_PATH = flags.DEFINE_string('out_path', None, 'Output directory.')
 _LIG_DIR = flags.DEFINE_string('lig_dir', None, 'Name of directory with ligand TOP/GRO files.')
-_PROT_DIR = flags.DEFINE_string('prot_dir', None, 'Name of directory with protein TOP/GRO files.')
+_APO_DIR = flags.DEFINE_string('apo_dir', None, 'Name of directory with TOP/GRO files for apo protein.')
 _N_REPEATS = flags.DEFINE_integer('n_repeats', 5,
                                 'The number of simulation repeats.')
 _NUM_MPI = flags.DEFINE_integer('num_mpi', 1,
@@ -166,8 +167,18 @@ def mdrun_completed(tpr_file: str, transition: bool = False) -> bool:
 
 def run_tpr(tpr_file, pmegpu, transition, max_restarts):
   logging.info(f'  --> {tpr_file}')
-  num_restarts = 0
+  start_time = time.time()
+  
+  # Check if completed already.
   done = mdrun_completed(tpr_file=tpr_file, transition=transition)
+  if done:
+    logging.info(f"  ... mdrun already completed successfully, skipping")
+    return
+
+  # If run not previously completed (i.e. not a job restart)
+  # then execute mdrun while allowing for a few re-starts in case
+  # of crashes.
+  num_restarts = 0
   while not done and num_restarts <= max_restarts:
     # Run the simulation. If previous attempt failed
     logging.info(f'  ... executing mdrun')
@@ -175,9 +186,11 @@ def run_tpr(tpr_file, pmegpu, transition, max_restarts):
     mdrun(tpr_file, pmegpu=pmegpu, transition=transition)
     # Check if simulation completed successfully.
     done = mdrun_completed(tpr_file=tpr_file, transition=transition)
-  
+    
+  end_time = time.time()
+  time_elapsed = parse_time(start_time, end_time)
   if done:
-    logging.info(f"  ... mdrun completed successfully")
+    logging.info(f"  ... simulation completed successfully in {time_elapsed} with {num_restarts-1} restarts")
   else:
     logging.info(f"  !!! max restarts ({max_restarts}) reached, mdrun did not complete successfully")
 
@@ -185,6 +198,23 @@ def run_tpr(tpr_file, pmegpu, transition, max_restarts):
 def run_all_tprs(tpr_files, pmegpu=True, transition=False):
   for tpr_file in tpr_files:
     run_tpr(tpr_file, pmegpu, transition, max_restarts=2)
+
+  
+def parse_time(start, end):
+  elapsed = end - start  # elapsed time in seconds
+  if elapsed <= 1.0:
+    ms = elapsed * 1000.
+    time_string = f"{ms:.1f} ms"
+  elif 1.0 < elapsed <= 60.0:
+    time_string = f"{elapsed:.1f} s"
+  elif 60.0 < elapsed <= 3600.0:
+    m, s = divmod(elapsed, 60)
+    time_string = f"{m:.0f} min, {s:.0f} s"
+  else:
+    h, m = divmod(elapsed, 3600)
+    m, s = divmod(m, 60)
+    time_string = f"{h:.0f} h, {m:.0f} min, {s:.0f} s"
+  return time_string
 
 
 def setup_abfe_obj_and_output_dir():
@@ -194,7 +224,7 @@ def setup_abfe_obj_and_output_dir():
   fe = AbsoluteDG(mdpPath=_MDP_PATH.value,  # Path to the MDP files.
                   structTopPath=_TOP_PATH.value,  # Path to structures and topologies.
                   ligList=[_LIG_DIR.value],  # Folders with protein-ligand input files.
-                  apoCase=_PROT_DIR.value,  # Folders with protein files.
+                  apoCase=_APO_DIR.value,  # Folders with apo protein files.
                   bDSSB=False,
                   gmxexec=gmxapi.commandline.cli_executable().as_posix())
 
@@ -247,11 +277,11 @@ def main(_):
   # file in this path.
   fe = setup_abfe_obj_and_output_dir()
 
-  logging.get_absl_handler().use_absl_log_file(log_dir=f'{_OUT_PATH.value}/{_LIG_DIR.value}/')
+  logging.get_absl_handler().use_absl_log_file('abfe', f'{_OUT_PATH.value}/{_LIG_DIR.value}/')
   flags.FLAGS.mark_as_parsed() 
   logging.set_verbosity(_log_level[_LOG_LEVEL.value])
 
-  logging.info('===== New ABFE job started =====')
+  logging.info('===== ABFE calculation started =====')
   logging.info('AbsoluteDG object has been instantiated.')
   logging.info('Changing workdir to %s', _OUT_PATH.value)
   os.chdir(_OUT_PATH.value)
