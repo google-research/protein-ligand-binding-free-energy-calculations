@@ -1,5 +1,5 @@
 r"""The main program for running gromacs ABFE calculations with
-a non-equilibrium protocol using .
+a non-equilibrium protocol and Boresch restraints.
 """
 
 import os
