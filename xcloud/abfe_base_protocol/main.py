@@ -324,7 +324,7 @@ def main(_):
   # Write results to file.
   fe.resultsSummary.to_csv(f"{_OUT_PATH.value}/results.csv", index=False)
   # Write breakdown of all terms contributing to overall dG.
-  fe.resultsAll.to_csv(f"{_OUT_PATH.value}/dg_terms.csv", index=False)
+  fe.resultsAll.to_csv(f"{_OUT_PATH.value}/dg_terms.csv", index=True)
 
   logging.info('Job completed.')
 
