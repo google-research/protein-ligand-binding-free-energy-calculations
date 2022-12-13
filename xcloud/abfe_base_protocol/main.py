@@ -351,9 +351,9 @@ def main(_):
   fe.run_analysis(ligs=[_LIG_DIR.value])
   fe.analysis_summary(ligs=[_LIG_DIR.value])
   # Write results to file.
-  fe.resultsSummary.to_csv(f"{_OUT_PATH.value}/results.csv", index=False)
+  fe.resultsSummary.to_csv(f"{_OUT_PATH.value}/{_LIG_DIR.value}/results.csv", index=False)
   # Write breakdown of all terms contributing to overall dG.
-  fe.resultsAll.to_csv(f"{_OUT_PATH.value}/dg_terms.csv", index=True)
+  fe.resultsAll.to_csv(f"{_OUT_PATH.value}/{_LIG_DIR.value}/dg_terms.csv", index=True)
 
   logging.info('Job completed.')
 
