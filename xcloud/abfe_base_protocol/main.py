@@ -2,6 +2,7 @@ r"""The main program for running gromacs ABFE calculations with
 a non-equilibrium protocol and Boresch restraints.
 """
 
+from typing import List
 import os
 import subprocess
 import time
@@ -29,9 +30,8 @@ _LOG_LEVEL = flags.DEFINE_string('log_level', 'INFO', 'Set level for logging '
                                  '(DEBUG, INFO, ERROR). Default is "INFO".')
 
 
-def mdrun(tpr, pmegpu=True, transition=False):
-  """Wrapper for gmxapi.mdrun with predefined scenarios optimized for different 
-  types of simulations.
+def _build_mdrun_args(tpr: str, pmegpu: bool, transition: bool) -> List:
+  """Builds the gmx mdrun command to be executed.
 
   Args:
     tpr (str): path to TPR file.
@@ -41,7 +41,7 @@ def mdrun(tpr, pmegpu=True, transition=False):
       Default is False.
 
   Returns:
-    object: StandardOperationHandle returned by gmxapi.mdrun.
+    List: command line to be executed with subprocess.
   """
 
   # Get gmx executable.
@@ -49,7 +49,7 @@ def mdrun(tpr, pmegpu=True, transition=False):
 
   # Get path to TPR.
   path = "/".join(tpr.split('/')[:-1])
-  
+
   # Specify command line flags and arguments to be passed to mdrun.
   # Note: energy minimization cannot run PME on GPU.
   if pmegpu:
@@ -66,8 +66,7 @@ def mdrun(tpr, pmegpu=True, transition=False):
   # determine if the simulation has been ran already.
   if transition:
     n = int(tpr.split('/')[-1].split('.')[0].replace('ti', ''))
-
-    subprocess.call([f'{gmxexec}', 'mdrun',
+    parameter_pack = [f'{gmxexec}', 'mdrun',
                      '-s', f'{tpr}',
                      '-x', f'{path}/traj_{n}.xtc',
                      '-o', f'{path}/traj_{n}.trr',
@@ -82,11 +81,15 @@ def mdrun(tpr, pmegpu=True, transition=False):
                      '-bonded', _bonded,
                      '-ntmpi', str(_NUM_MPI.value),
                      '-ntomp', str(_NUM_THREADS.value),
-                     '-pin', 'on'],
-                     stdout=subprocess.DEVNULL,
-                     stderr=subprocess.STDOUT)
+                     '-pin', 'on']
+
+    output_files = [f'{path}/traj_{n}.xtc', 
+                    f'{path}/traj_{n}.trr', 
+                    f'{path}/confout_{n}.gro', 
+                    f'{path}/ener_{n}.edr', 
+                    f'{path}/state_{n}.cpt']
   else:
-    subprocess.call([f'{gmxexec}', 'mdrun',
+    parameter_pack = [f'{gmxexec}', 'mdrun',
                      '-s', f'{tpr}',
                      '-x', f'{path}/traj.xtc',
                      '-o', f'{path}/traj.trr',
@@ -101,17 +104,43 @@ def mdrun(tpr, pmegpu=True, transition=False):
                      '-bonded', _bonded,
                      '-ntmpi', str(_NUM_MPI.value),
                      '-ntomp', str(_NUM_THREADS.value),
-                     '-pin', 'on'],
-                     stdout=subprocess.DEVNULL,
-                     stderr=subprocess.STDOUT)
+                     '-pin', 'on']
+
+  output_files = [f'{path}/traj.xtc', 
+                  f'{path}/traj.trr', 
+                  f'{path}/confout.gro', 
+                  f'{path}/ener.edr', 
+                  f'{path}/state.cpt']
+
+  return parameter_pack, output_files
+
+
+def mdrun(tpr: str, pmegpu: bool = True, transition: bool = False) -> None:
+  """Wrapper mdrun with predefined scenarios optimized for different 
+  types of simulations.
+
+  Args:
+    tpr (str): path to TPR file.
+    pmegpu (bool): whether to run PME calculations on the GPU. Default is True.
+      Note this is not possible with certain integrators.
+    transition (bool): whether we are running a non-equilibrium transition. 
+      Default is False.
+
+  Returns:
+    None
+  """
+
+  # Get mdrun arguments.
+  parameter_pack, output_files = _build_mdrun_args(tpr, pmegpu, transition)
+
+  # Run mdrun.
+  subprocess.run(parameter_pack,
+                 stdout=subprocess.DEVNULL,
+                 stderr=subprocess.STDOUT)
 
   # If transition, clean up files we won't need.
   if transition:
-    for f in [f'{path}/traj_{n}.xtc', 
-              f'{path}/traj_{n}.trr', 
-              f'{path}/confout_{n}.gro', 
-              f'{path}/ener_{n}.edr', 
-              f'{path}/state_{n}.cpt']:
+    for f in output_files:
       if os.path.isfile(f):
         os.remove(f)
 
