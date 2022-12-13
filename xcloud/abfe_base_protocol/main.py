@@ -280,7 +280,7 @@ def setup_abfe_obj_and_output_dir():
 
   # ps to discard from equilibrium simulations when preparing the input for 
   # the non-equilibrium ones.
-  fe.equilTime = 2000.
+  fe.equilTime = 1001.
   # Whether to generate TPRs from extracted frames and rm GRO files.
   fe.bGenTiTpr = True
 
@@ -351,9 +351,9 @@ def main(_):
   fe.run_analysis(ligs=[_LIG_DIR.value])
   fe.analysis_summary(ligs=[_LIG_DIR.value])
   # Write results to file.
-  fe.resultsSummary.to_csv(f"{_OUT_PATH.value}/{_LIG_DIR.value}/results.csv", index=False)
+  fe.resultsSummary.to_csv(os.path.join(_OUT_PATH.value, _LIG_DIR.value, 'results.csv'), index=False)
   # Write breakdown of all terms contributing to overall dG.
-  fe.resultsAll.to_csv(f"{_OUT_PATH.value}/{_LIG_DIR.value}/dg_terms.csv", index=True)
+  fe.resultsAll.to_csv(os.path.join(_OUT_PATH.value, _LIG_DIR.value, 'dg_terms.csv'), index=True)
 
   logging.info('Job completed.')
 
