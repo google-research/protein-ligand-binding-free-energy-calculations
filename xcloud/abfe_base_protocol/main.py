@@ -20,6 +20,8 @@ _TOP_PATH = flags.DEFINE_string('top_path', None, 'Path to GRO/TOP files.')
 _OUT_PATH = flags.DEFINE_string('out_path', None, 'Output directory.')
 _LIG_DIR = flags.DEFINE_string('lig_dir', None, 'Name of directory with ligand TOP/GRO files.')
 _APO_DIR = flags.DEFINE_string('apo_dir', None, 'Name of directory with TOP/GRO files for apo protein.')
+_EQUIL_TIME = flags.DEFINE_float('equil_time', 1000.1, 'Equilibration time (in ps) to discard from '
+                                 'the equilibrium simulations.')
 _N_REPEATS = flags.DEFINE_integer('n_repeats', 5,
                                 'The number of simulation repeats.')
 _NUM_MPI = flags.DEFINE_integer('num_mpi', 1,
@@ -30,15 +32,13 @@ _LOG_LEVEL = flags.DEFINE_string('log_level', 'INFO', 'Set level for logging '
                                  '(DEBUG, INFO, ERROR). Default is "INFO".')
 
 
-def _build_mdrun_args(tpr: str, pmegpu: bool, transition: bool) -> List:
+def _build_mdrun_args(tpr: str, pmegpu: bool) -> List:
   """Builds the gmx mdrun command to be executed.
 
   Args:
     tpr (str): path to TPR file.
     pmegpu (bool): whether to run PME calculations on the GPU. Default is True.
       Note this is not possible with certain integrators.
-    transition (bool): whether we are running a non-equilibrium transition. 
-      Default is False.
 
   Returns:
     List: command line to be executed with subprocess.
@@ -48,7 +48,7 @@ def _build_mdrun_args(tpr: str, pmegpu: bool, transition: bool) -> List:
   gmxexec = gmxapi.commandline.cli_executable().as_posix()
 
   # Get path to TPR.
-  path = "/".join(tpr.split('/')[:-1])
+  simpath = os.path.dirname(tpr)
 
   # Specify command line flags and arguments to be passed to mdrun.
   # Note: energy minimization cannot run PME on GPU.
@@ -61,61 +61,27 @@ def _build_mdrun_args(tpr: str, pmegpu: bool, transition: bool) -> List:
     _pmefft = 'auto'
     _bonded = 'auto'
 
-  # If we are running a non-equilibrium transition, we want to get the dhdl
-  # file and keep only that. We then use the presence of dhdl_{n}.xvg to 
-  # determine if the simulation has been ran already.
-  if transition:
-    n = int(tpr.split('/')[-1].split('.')[0].replace('ti', ''))
-    parameter_pack = [f'{gmxexec}', 'mdrun',
-                     '-s', f'{tpr}',
-                     '-x', f'{path}/traj_{n}.xtc',
-                     '-o', f'{path}/traj_{n}.trr',
-                     '-c', f'{path}/confout_{n}.gro',
-                     '-e', f'{path}/ener_{n}.edr',
-                     '-g', f'{path}/md_{n}.log',
-                     '-cpo', f'{path}/state_{n}.cpt',
-                     '-dhdl', f'{path}/dhdl_{n}.xvg',
-                     '-nb', 'gpu',
-                     '-pme', _pme,
-                     '-pmefft', _pmefft,
-                     '-bonded', _bonded,
-                     '-ntmpi', str(_NUM_MPI.value),
-                     '-ntomp', str(_NUM_THREADS.value),
-                     '-pin', 'on']
+  parameter_pack = [f'{gmxexec}', 'mdrun',
+                   '-s', f'{tpr}',
+                   '-x', f'{simpath}/traj.xtc',
+                   '-o', f'{simpath}/traj.trr',
+                   '-c', f'{simpath}/confout.gro',
+                   '-e', f'{simpath}/ener.edr',
+                   '-g', f'{simpath}/md.log',
+                   '-cpo', f'{simpath}/state.cpt',
+                   '-dhdl', f'{simpath}/dhdl.xvg',
+                   '-nb', 'gpu',
+                   '-pme', _pme,
+                   '-pmefft', _pmefft,
+                   '-bonded', _bonded,
+                   '-ntmpi', str(_NUM_MPI.value),
+                   '-ntomp', str(_NUM_THREADS.value),
+                   '-pin', 'on']
 
-    output_files = [f'{path}/traj_{n}.xtc', 
-                    f'{path}/traj_{n}.trr', 
-                    f'{path}/confout_{n}.gro', 
-                    f'{path}/ener_{n}.edr', 
-                    f'{path}/state_{n}.cpt']
-  else:
-    parameter_pack = [f'{gmxexec}', 'mdrun',
-                     '-s', f'{tpr}',
-                     '-x', f'{path}/traj.xtc',
-                     '-o', f'{path}/traj.trr',
-                     '-c', f'{path}/confout.gro',
-                     '-e', f'{path}/ener.edr',
-                     '-g', f'{path}/md.log',
-                     '-cpo', f'{path}/state.cpt',
-                     '-dhdl', f'{path}/dhdl.xvg',
-                     '-nb', 'gpu',
-                     '-pme', _pme,
-                     '-pmefft', _pmefft,
-                     '-bonded', _bonded,
-                     '-ntmpi', str(_NUM_MPI.value),
-                     '-ntomp', str(_NUM_THREADS.value),
-                     '-pin', 'on']
-
-  output_files = [f'{path}/traj.xtc', 
-                  f'{path}/traj.trr', 
-                  f'{path}/confout.gro', 
-                  f'{path}/ener.edr', 
-                  f'{path}/state.cpt']
-
-  return parameter_pack, output_files
+  return parameter_pack
 
 
-def mdrun(tpr: str, pmegpu: bool = True, transition: bool = False) -> None:
+def mdrun(tpr: str, pmegpu: bool = True) -> None:
   """Wrapper mdrun with predefined scenarios optimized for different 
   types of simulations.
 
@@ -123,83 +89,56 @@ def mdrun(tpr: str, pmegpu: bool = True, transition: bool = False) -> None:
     tpr (str): path to TPR file.
     pmegpu (bool): whether to run PME calculations on the GPU. Default is True.
       Note this is not possible with certain integrators.
-    transition (bool): whether we are running a non-equilibrium transition. 
-      Default is False.
 
   Returns:
     None
   """
 
+  # Get path to TPR.
+  simpath = os.path.dirname(tpr)
+
   # Get mdrun arguments.
-  parameter_pack, output_files = _build_mdrun_args(tpr, pmegpu, transition)
+  parameter_pack = _build_mdrun_args(tpr, pmegpu)
 
   # Run mdrun.
-  subprocess.run(parameter_pack,
-                 stdout=subprocess.DEVNULL,
-                 stderr=subprocess.STDOUT)
+  try:
+    process = subprocess.run(parameter_pack, check=True, capture_output=True)
+  except subprocess.CalledProcessError as e:
+    # Mark simulation as failed.
+    open(os.path.join(simpath, '_FAILED'), 'w+').close()
+    # Log the failure.
+    logging.error("  ... simulation failed with exception: %s", str(e))
+    return
 
-  # If transition, clean up files we won't need.
-  if transition:
-    for f in output_files:
-      if os.path.isfile(f):
-        os.remove(f)
+  # Mark simulation as completed.
+  open(os.path.join(simpath, '_COMPLETED'), 'w+').close()
+  # Rm previous _FAILED, as it means we eventually completed the simulation.
+  if os.path.isfile(os.path.join(simpath, '_FAILED')):
+    os.remove(os.path.join(simpath, '_FAILED'))
+
+  # Log gromacs output for debugging purposes. Not logging to INFO becuase
+  # it's too much output. Also note that gromacs prints normal info
+  # messages to stderr.
+  if not process.stdout:
+    logging.debug("Completed simulation (stdout): \n %s", process.stdout)
+  if not process.stderr:
+    logging.debug("Completed simulation (stderr): \n %s", process.stderr)
 
 
-def mdrun_completed(tpr_file: str, transition: bool = False) -> bool:
-  """Checks whether energy minimization completed successfully.
-  
-  Args:
-    tpr (str): path to TPR file.
-    transition (bool): whether we are checking completion for a non-equilibrium 
-      transition. Default is False.
-
-  Returns:
-    bool: whether the TPR has been run successfully.
-  """
-  # If we're chekcing the completion of a non-eq transition, we check that (i)
-  # the right dhdl.xvg file exists, and that (ii) it contains info up to the 
-  # end of the transition. Otherwise, we assume it crashed and needs to be
-  # completed.
-  if transition:
-    # Get the index of the transition.
-    n = int(tpr_file.split('/')[-1].split('.')[0].replace('ti', ''))
-    # Get dhdl file path.
-    dhdl = "/".join(tpr_file.split("/")[:-1]) + f"/dhdl_{n}.xvg"
-    # If dhdl file exists, check it's complete.
-    if os.path.isfile(dhdl):
-      input_tpr = gmxapi.read_tpr(tpr_file)
-      nsteps = input_tpr.output.parameters.result()['nsteps']
-      dt = input_tpr.output.parameters.result()['dt']
-      expected_final_time = nsteps * dt
-      
-      with open(dhdl, 'r') as f:
-        lines = f.readlines()
-      
-      try:
-        actual_final_time = float(lines[-1].split()[0])
-        if expected_final_time - actual_final_time < 1e-6:
-          return True
-      except:
-        return False
-      
-    return False
+def _mdrun_completed(simpath):
+  if os.path.isfile(os.path.join(simpath, '_COMPLETED')):
+    return True
   else:
-    # (maldeghi): IIRC Gromacs would output the GRO file only for mdruns that
-    # did not crash/errored. We can make this stricted by checking the log
-    # file too.
-    gro = "/".join(tpr_file.split("/")[:-1]) + "/confout.gro"
-    if os.path.isfile(gro):
-      return True
-    else:
-      return False
+    return False
 
 
-def run_tpr(tpr_file, pmegpu, transition, max_restarts):
+def run_tpr(tpr_file, pmegpu, max_restarts):
   logging.info(f'  --> {tpr_file}')
   start_time = time.time()
   
-  # Check if completed already.
-  done = mdrun_completed(tpr_file=tpr_file, transition=transition)
+  # Check if completed already. This check is meant to be useful if
+  # the job was unexpectedly killed while mdrun was being executed. 
+  done = _mdrun_completed(os.path.dirname(tpr_file))
   if done:
     logging.info(f"  ... mdrun already completed successfully, skipping")
     return
@@ -212,9 +151,9 @@ def run_tpr(tpr_file, pmegpu, transition, max_restarts):
     # Run the simulation. If previous attempt failed
     logging.info(f'  ... executing mdrun')
     num_restarts += 1
-    mdrun(tpr_file, pmegpu=pmegpu, transition=transition)
+    mdrun(tpr_file, pmegpu=pmegpu)
     # Check if simulation completed successfully.
-    done = mdrun_completed(tpr_file=tpr_file, transition=transition)
+    done = _mdrun_completed(os.path.dirname(tpr_file))
     
   end_time = time.time()
   time_elapsed = parse_time(start_time, end_time)
@@ -224,9 +163,9 @@ def run_tpr(tpr_file, pmegpu, transition, max_restarts):
     logging.info(f"  !!! max restarts ({max_restarts}) reached, mdrun did not complete successfully")
 
 
-def run_all_tprs(tpr_files, pmegpu=True, transition=False):
+def run_all_tprs(tpr_files, pmegpu=True):
   for tpr_file in tpr_files:
-    run_tpr(tpr_file, pmegpu, transition, max_restarts=2)
+    run_tpr(tpr_file, pmegpu, max_restarts=2)
 
   
 def parse_time(start, end):
@@ -264,9 +203,9 @@ def setup_abfe_obj_and_output_dir():
 
   # Prepare the directory structure with all simulations steps required.
   fe.simTypes = ['em',  # Energy minimization.
-                'eq_posre',  # Equilibrium sim with position restraints.
-                'eq',  # Equilibrium simulation.
-                'transitions']  # Alchemical, non-equilibrium simulations.
+                 'eq_posre',  # Equilibrium sim with position restraints.
+                 'eq',  # Equilibrium simulation.
+                 'transitions']  # Alchemical, non-equilibrium simulations.
 
   # Specify the number of equivalent poses available for the ligand due to 
   # simmetry, and which we are unlikely to sample during the simulations due to 
@@ -280,7 +219,7 @@ def setup_abfe_obj_and_output_dir():
 
   # ps to discard from equilibrium simulations when preparing the input for 
   # the non-equilibrium ones.
-  fe.equilTime = 1001.
+  fe.equilTime = _EQUIL_TIME.value
   # Whether to generate TPRs from extracted frames and rm GRO files.
   fe.bGenTiTpr = True
 
@@ -329,22 +268,22 @@ def main(_):
   logging.info('Running energy minimizations.')
   tpr_files = fe.prepare_simulation(simType='em')
   # Read the TPR files and run all minimizations.
-  run_all_tprs(tpr_files, pmegpu=False, transition=False)
+  run_all_tprs(tpr_files, pmegpu=False)
   
   # Short equilibrations.
   logging.info('Running equilibration.')
   tpr_files = fe.prepare_simulation(simType='eq_posre', prevSim='em')
-  run_all_tprs(tpr_files, pmegpu=True, transition=False)
+  run_all_tprs(tpr_files, pmegpu=True)
   
   # Equilibrium simulations.
   logging.info('Running production equilibrium simulations.')
   tpr_files = fe.prepare_simulation(simType='eq', prevSim='eq_posre')
-  run_all_tprs(tpr_files, pmegpu=True, transition=False)
+  run_all_tprs(tpr_files, pmegpu=True)
 
   # Non-equilibrium simulations.
   logging.info('Running alchemical transitions.')
   tpr_files = fe.prepare_simulation(simType='transitions')
-  run_all_tprs(tpr_files, pmegpu=True, transition=True)
+  run_all_tprs(tpr_files, pmegpu=True)
   
   # Analysis.
   logging.info('Analyzing results.')
