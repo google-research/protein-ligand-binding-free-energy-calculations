@@ -34,8 +34,10 @@ from pmx.AbsoluteDG import AbsoluteDG
 
 
 # Flags about paths and input folders.
+_TOP_PATH = flags.DEFINE_string('top_path', None, 'Path to folder with GRO/TOP files. We expect this directory will have '
+                                'one subfolder for each calculation, with the inputs for different ligands, and '
+                                'optionally for the apo protein simulations.')
 _MDP_PATH = flags.DEFINE_string('mdp_path', None, 'Path to MDP files.')
-_TOP_PATH = flags.DEFINE_string('top_path', None, 'Path to GRO/TOP files.')
 _OUT_PATH = flags.DEFINE_string('out_path', None, 'Output directory.')
 _LIG_DIR = flags.DEFINE_string('lig_dir', None, 'Name of directory with ligand TOP/GRO files.')
 _APO_DIR = flags.DEFINE_string('apo_dir', None, 'Name of directory with TOP/GRO files for apo protein.')
