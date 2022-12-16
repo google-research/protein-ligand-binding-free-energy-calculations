@@ -2,32 +2,65 @@ r"""The main program for running gromacs ABFE calculations with
 a non-equilibrium protocol and Boresch restraints.
 """
 
-from typing import List
+from typing import List, Dict, Tuple
 import os
 import subprocess
 import time
+import random
+import glob
+import scipy
 
 from absl import app
 from absl import flags
 from absl import logging
 
 import gmxapi
+import pmx
 from pmx.AbsoluteDG import AbsoluteDG
 
 
+# Flags about paths and input folders.
 _MDP_PATH = flags.DEFINE_string('mdp_path', None, 'Path to MDP files.')
 _TOP_PATH = flags.DEFINE_string('top_path', None, 'Path to GRO/TOP files.')
 _OUT_PATH = flags.DEFINE_string('out_path', None, 'Output directory.')
 _LIG_DIR = flags.DEFINE_string('lig_dir', None, 'Name of directory with ligand TOP/GRO files.')
 _APO_DIR = flags.DEFINE_string('apo_dir', None, 'Name of directory with TOP/GRO files for apo protein.')
+# Flags about simulation parameters.
 _EQUIL_TIME = flags.DEFINE_float('equil_time', 1000.1, 'Equilibration time (in ps) to discard from '
                                  'the equilibrium simulations.')
-_N_REPEATS = flags.DEFINE_integer('n_repeats', 5,
+_NUM_REPEATS = flags.DEFINE_integer('num_repeats', 5,
                                 'The number of simulation repeats.')
+# Flags about early stopping.
+_TARGET_PRECISION_WAT = flags.DEFINE_float('target_precision_wat', 0., 'Target precision of the dG estimate '
+                                           'for the ligand in water calculations. The precision is measured as the '
+                                           'standard error in kJ/mol. '
+                                           'An early stopping mechanism will be used in which '
+                                           'we stop running non-equilibrium simulations once this precision '
+                                           'has been achieved. Default is 0 kJ/mol. (i.e. do not use early stopping).')
+_TARGET_PRECISION_PRO = flags.DEFINE_float('target_precision_pro', 0., 'Target precision of the dG estimate '
+                                           'for the protein in water calculations. The precision is measured as the '
+                                           'standard error in kJ/mol. '
+                                           'An early stopping mechanism will be used in which '
+                                           'we stop running non-equilibrium simulations once this precision '
+                                           'has been achieved. Default is 0 kJ/mol. (i.e. do not use early stopping).')
+_FREQ_PRECISION_EVAL = flags.DEFINE_integer('freq_precision_eval', 10, 'Frequency with which to evaluate '
+                                            'the precision of the dG estimates. The number specified '
+                                            'corresponds to how many non-equilibrium transitions are run '
+                                            'before estimating free energy differences again.')
+_PATIENCE = flags.DEFINE_integer('patience', 3, 'Number of consecutive iterations in which the `target_precision` '
+                                 'is reached that are allowed before terminating further non-equilibrium simulations.')
+_MIN_NUM_TRANSITIONS = flags.DEFINE_integer('min_num_transitions', 0, 'Minimum number of non-equilibrium transitions '
+                                            'we guarantee will be run while using early stopping. This is the number '
+                                            'per each individual repeat; e.g., if this is set to 10, 10 transitions will '
+                                            'be run for all repeats in state A and all in state B.')
+# Flags about paralellization.
 _NUM_MPI = flags.DEFINE_integer('num_mpi', 1,
                                 'The number of thread-MPI processes.')
 _NUM_THREADS = flags.DEFINE_integer('num_threads', 4,
                                     'The number of OpenMP threads.')
+# Flags about other stuff.
+_MAX_RESTARTS = flags.DEFINE_integer('max_restarts', 2,
+                                     'Maximum number of restarts we will attempt if a simulation fails.')
 _LOG_LEVEL = flags.DEFINE_string('log_level', 'INFO', 'Set level for logging '
                                  '(DEBUG, INFO, ERROR). Default is "INFO".')
 
@@ -132,7 +165,15 @@ def _mdrun_completed(simpath):
     return False
 
 
-def run_tpr(tpr_file, pmegpu, max_restarts):
+def run_tpr(tpr_file: str, pmegpu: bool, max_restarts: int) -> None:
+  """Run the simulation associated with a TPR file. But it checks if the simulation
+  was already run, and tries to restart it if it crashes.
+
+  Args:
+      tpr_file (str): absolute path to TPR file.
+      pmegpu (bool): whether to use PME on GPU.
+      max_restarts (int): max number of restart attempts for crashing simulations.
+  """
   logging.info(f'  --> {tpr_file}')
   start_time = time.time()
   
@@ -165,10 +206,184 @@ def run_tpr(tpr_file, pmegpu, max_restarts):
 
 def run_all_tprs(tpr_files, pmegpu=True):
   for tpr_file in tpr_files:
-    run_tpr(tpr_file, pmegpu, max_restarts=2)
+    run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value)
 
+
+def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = True, patience: int = 2):
+  """Run non-equilibrium simulations with en early stopping mechanism. If we desired 
+  precision (specified by _TARGET_PRECISION) is reached in the N consecutive iterations 
+  (as specified by `patience`), we terminate the execution of additional simulations. 
+  The interval at which we check the precision is specified by _FREQ_PRECISION_EVAL.
+
+  Args:
+      tpr_files (List): list of TPR files with absolute paths.
+      pmegpu (bool, optional): whether to run PME on the GPU. Defaults to True.
+      patience (int, optional): number of consecutive iterations in which target 
+        precision is reached that are allowed before terminating further mdrun 
+        executions. Defaults to 2.
+  """
+
+  # Split list of tpr files in the water/protein, state A/B, run N.
+  # Also, shuffle tpr lists. This is done to ensure uniform sampling of 
+  # starting points.
+  tpr_tree = _build_tpr_tree(tpr_files, shuffle=True)
+
+  def _execute_sims_with_early_stopping_loop(env: str, target_precision: float, patience: int) -> None:
+    """Runs non-equil transitions with earaly stopping for either the water or 
+    protein environment.
+
+    Args:
+        env (str): ligand environment ('water' or 'protein').
+        target_precision (float): desired precision in kJ/mol.
+        patience (int): patience counter.
+    """
+    # Validate args.
+    _valid_envs = ['water', 'protein']
+    if env not in _valid_envs:
+        raise ValueError('`env` can only be "water" or "protein"')
+
+    def _run_multiple_transitions(num_transitions: int) -> int:
+      """Runs the specified number of transitions.
+
+      Args:
+          num_transitions (int): number of transitions to run.
+
+      Returns:
+          int: actual number of transitions run.
+      """
+      _num_transitions_actually_run = 0
+      # Run N non-equil sims for both states A and B, and all repeats.
+      for _ in range(num_transitions):
+        for state in tpr_tree[env].keys():
+          for run in tpr_tree[env][state].keys():
+            # Check the list is not empty (i.e. we ran all sims already).
+            if tpr_tree[env][state][run]:
+              tpr_file = tpr_tree[env][state][run].pop(0)
+              run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value)
+              _num_transitions_actually_run += 1
+      return _num_transitions_actually_run
+
+    def _evaluate_precision_and_update_patience(target_precision: float, _patience: int) -> int:
+      # Run analysis and get precision.
+      logging.info(f"Evaluating precision for {env} dG")
+      precision = _estimate_dg_precision(env=env)
+      
+      # If target precision reached, decrease patience counter.
+      if precision < target_precision:
+        _patience -= 1
+        logging.info(f"  Target precision reached ({precision:.2f} < {target_precision:.2f} kJ/mol)")
+        logging.info(f"  Patience left: {_patience}")
+      else:
+        # Reset patience. This ensures that only if precistion < target_precision in consecutive
+        # iterations we stop early. If we hit the target, then miss it with more data, we reset
+        # the patience counter.
+        _patience = patience
+        logging.info(f"  Precision ({precision:.2f} kJ/mol) above target one ({target_precision:.2f} kJ/mol)")
+      
+      return _patience
+
+    # Running patience value.
+    _patience = patience
+
+    # First, run the minimum number of transitions we want to guarantee are run.
+    if _MIN_NUM_TRANSITIONS.value > 0:
+      _ = _run_multiple_transitions(_MIN_NUM_TRANSITIONS.value)
+      # Run analysis and get precision.
+      _patience = _evaluate_precision_and_update_patience(target_precision, _patience)
+
+    # Then, run the other transitions, _FREQ_PRECISION_EVAL at a time, until
+    # we achieve desired precision for N iterations, as defined by the
+    # patience param.
+    while _patience > 0:
+      # Run N non-equil sims for both states A and B, and all repeats.
+      _num_transitions_actually_run = _run_multiple_transitions(_FREQ_PRECISION_EVAL.value)
+      # Safety mechanism to exit the loop. E.g., we ran all simulations
+      # such that there is no tpr left to run. 
+      if _num_transitions_actually_run < 1:
+        logging.info(f"  Available non-equil simulations in {env} environment exhausted")
+        return
+      
+      # Run analysis and get precision.
+      _patience = _evaluate_precision_and_update_patience(target_precision, _patience)
+      
+    logging.info(f"  Terminating mdrun execution for {env} non-equil simulations")
+
+  # Run both water and protein sims until precision reached or run out of transitions.
+  _execute_sims_with_early_stopping_loop(env='water', 
+                                         target_precision=_TARGET_PRECISION_WAT.value, 
+                                         patience=patience)
+  _execute_sims_with_early_stopping_loop(env='protein', 
+                                         target_precision=_TARGET_PRECISION_PRO.value, 
+                                         patience=patience)
+
+
+def _estimate_dg_precision(env: str = 'water', T: float = 298.15) -> float:
+  """Estimate the standard error of the dG estimate across independent repeats.
+
+  Args:
+      env (str, optional): the ligand environment, 'water' or 'protein'. Defaults to 'water'.
+      T (float, optional): the temperature in Kelvin. Defaults to 298.15.
+
+  Returns:
+      float: standard error of the mean for dG estimates across separate repeats.
+  """
+
+  dg_estimates = []  # List used to store dG estimates from different repeats.
+
+  # Estimate dG for each repeat.
+  for i in range(1, _NUM_REPEATS.value + 1):
+    # Get all available data from gromacs.
+    filesA = glob.glob(f'{_OUT_PATH.value}/{_LIG_DIR.value}/{env}/stateA/run{i}/transitions/frame*/dhdl.xvg')
+    filesB = glob.glob(f'{_OUT_PATH.value}/{_LIG_DIR.value}/{env}/stateB/run{i}/transitions/frame*/dhdl.xvg')
+    # Read files and compute integrated work values.
+    workA = pmx.analysis.read_dgdl_files(filesA, lambda0=0, invert_values=False, verbose=False, sigmoid=0.0)
+    workB = pmx.analysis.read_dgdl_files(filesB, lambda0=1, invert_values=False, verbose=False, sigmoid=0.0)
+    # Estimate dG value with BAR.
+    bar = pmx.estimators.BAR(workA, workB, T=T, nboots=0, nblocks=1)
+    # Append estimate.
+    dg_estimates.append(bar.dg)
   
-def parse_time(start, end):
+  # Returns standard error across repeats.
+  return scipy.stats.sem(dg_estimates)
+
+
+def _build_tpr_tree(tpr_list: List, shuffle: bool = True) -> Dict:
+  """Takes a list of paths to TPR files and splits them by environment (water vs protein),
+  state (A vs B), and repeat number. The resulting lists are put into a dict of dicts of lists
+  in tree-like structure.
+
+  Args:
+      tpr_list (List): list of TPR files with abolute paths.
+      shuffle (bool, optional): whether to shuffle the resulting lists. We do this to ensure 
+        uniform sampling of starting points when running the simulations one by one. Defaults to True.
+
+  Returns:
+      Dict: dictionary with tree-like structure (dict[env][state][repeat], 
+        e.g. dict['water']['stateA']['run3']), containing lists of TPR files organized by
+        environment, state, and repeat number.
+  """
+  tpr_dict = {}
+  for env in ['water', 'protein']:
+    tpr_dict[env] = {}
+    for state in ['stateA', 'stateB']:
+      tpr_dict[env][state] = {}
+      for run in [f'run{n}' for n in range(1, _NUM_REPEATS.value + 1)]:
+        tpr_dict[env][state][run] = [tpr for tpr in tpr_list if f'{env}/{state}/{run}' in tpr]
+        if shuffle:
+          random.shuffle(tpr_dict[env][state][run])
+  return tpr_dict
+
+
+def parse_time(start: float, end: float) -> str:
+  """Makes a readable string for elapsed time.
+
+  Args:
+      start (float): start time from time.time().
+      end (float): end time from time.time().
+
+  Returns:
+      str: elapsed time described in hours, minutes, seconds.
+  """
   elapsed = end - start  # elapsed time in seconds
   if elapsed <= 1.0:
     ms = elapsed * 1000.
@@ -185,7 +400,12 @@ def parse_time(start, end):
   return time_string
 
 
-def setup_abfe_obj_and_output_dir():
+def setup_abfe_obj_and_output_dir() -> AbsoluteDG:
+  """Instantiates PMX object handling the setup and analysis of the calculation.
+
+  Returns:
+      AbsoluteDG: instance handling the calculation setup/analysis.
+  """
 
   # Initialize the free energy environment object. It will store the main 
   # parameters for the calculations.
@@ -199,7 +419,7 @@ def setup_abfe_obj_and_output_dir():
   # Set the workpath in which simulation input files will be created.
   fe.workPath = _OUT_PATH.value
   # Set the number of replicas (i.e., number of equilibrium simulations per state).
-  fe.replicas = _N_REPEATS.value
+  fe.replicas = _NUM_REPEATS.value
 
   # Prepare the directory structure with all simulations steps required.
   fe.simTypes = ['em',  # Energy minimization.
@@ -227,6 +447,29 @@ def setup_abfe_obj_and_output_dir():
   return fe
 
 
+def _parse_and_validate_flags() -> List[Tuple]:
+
+  if _NUM_REPEATS.value < 2 and _TARGET_PRECISION_WAT.value > 1e-5:
+    logging.warning("! Cannot use early stopping with only 1 repeat. "
+                    "Early stopping for water calcs switched off.")
+    _TARGET_PRECISION_WAT.value = 0.
+
+  if _NUM_REPEATS.value < 2 and _TARGET_PRECISION_PRO.value > 1e-5:
+    logging.warning("! Cannot use early stopping with only 1 repeat. "
+                    "Early stopping for water calcs switched off.")
+    _TARGET_PRECISION_PRO.value = 0.
+
+
+def _log_delayed_logs(logging, delayed_logs: List[Tuple]):
+  for entry in delayed_logs:
+    level = entry[0]
+    message = entry[1]
+    if level == 'info':
+      logging.info(message)
+    elif level == 'warning':
+      logging.warning(message)
+
+
 def main(_):
   
   flags.mark_flag_as_required('mdp_path')
@@ -246,8 +489,9 @@ def main(_):
   fe = setup_abfe_obj_and_output_dir()
 
   logging.get_absl_handler().use_absl_log_file('abfe', f'{_OUT_PATH.value}/{_LIG_DIR.value}/')
-  flags.FLAGS.mark_as_parsed() 
+  flags.FLAGS.mark_as_parsed()
   logging.set_verbosity(_log_level[_LOG_LEVEL.value])
+  _parse_and_validate_flags()
 
   logging.info('===== ABFE calculation started =====')
   logging.info('AbsoluteDG object has been instantiated.')
@@ -283,7 +527,14 @@ def main(_):
   # Non-equilibrium simulations.
   logging.info('Running alchemical transitions.')
   tpr_files = fe.prepare_simulation(simType='transitions')
-  run_all_tprs(tpr_files, pmegpu=True)
+  if _TARGET_PRECISION_WAT.value > 1e-5 or _TARGET_PRECISION_PRO.value > 1e-5:
+    logging.info(f'Using early stopping with target precision of {_TARGET_PRECISION_WAT.value} '
+                 f'kJ/mol for water calcs, {_TARGET_PRECISION_PRO.value} kJ/mol for protein calcs, '
+                 f'evaluation frequency of {_FREQ_PRECISION_EVAL.value}, and a minimum number of '
+                 f'transitions of {_MIN_NUM_TRANSITIONS.value}.')
+    run_all_transition_tprs_with_early_stopping(tpr_files, pmegpu=True, patience=_PATIENCE.value)
+  else:
+    run_all_tprs(tpr_files, pmegpu=True)
   
   # Analysis.
   logging.info('Analyzing results.')
