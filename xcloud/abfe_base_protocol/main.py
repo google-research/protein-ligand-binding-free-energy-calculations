@@ -150,13 +150,17 @@ def mdrun(tpr: str, pmegpu: bool = True) -> None:
   parameter_pack = _build_mdrun_args(tpr, pmegpu)
 
   # Run mdrun.
-  try:
-    process = subprocess.run(parameter_pack, check=True, capture_output=True)
-  except subprocess.CalledProcessError as e:
+  process = subprocess.run(parameter_pack, check=False, capture_output=True)
+  if process.returncode != 0:
     # Mark simulation as failed.
     open(os.path.join(simpath, '_FAILED'), 'w+').close()
     # Log the failure.
-    logging.error("  ... simulation failed with exception: %s", str(e))
+    logging.error(f'  ... simulation failed (returned non-zero exit status {process.returncode})')
+    # Show the last output from Gromacs for ease of debugging.
+    logging.error('='*30 + 'last 20 lines of Gromacs stderr' + '='*30)
+    _gmx_stderr = "\n".join(process.stderr.decode().splitlines()[-20:])
+    logging.error(_gmx_stderr)
+    logging.error('='*30 + '='*31 + '='*30)
     return
 
   # Mark simulation as completed.
@@ -476,14 +480,36 @@ def _parse_and_validate_flags() -> List[Tuple]:
     _TARGET_PRECISION_PRO.value = 0.
 
 
-def _log_delayed_logs(logging, delayed_logs: List[Tuple]):
-  for entry in delayed_logs:
-    level = entry[0]
-    message = entry[1]
-    if level == 'info':
-      logging.info(message)
-    elif level == 'warning':
-      logging.warning(message)
+def _validate_tpr_generation(sim_stage):
+  missing = []
+  for env in ['water', 'protein']:
+    for state in ['stateA', 'stateB']:
+      for n in _NUM_REPEATS.value:
+        tpr_file_path = os.path.join(_OUT_PATH.value, _LIG_DIR.value, env, state, f'run{n}', sim_stage, 'tpr.tpr')
+        if not os.path.isfile(tpr_file_path):
+          missing.append(tpr_file_path)
+
+  if len(missing) > 0:
+    logging.error("!!! Not all TPR files were successfully generated !!!")
+    for f in missing:
+      logging.error(f'Missing "{f}"')
+    raise FileExistsError('not all tpr.tpr files were created')
+  pass
+
+
+def _validate_system_assembly():
+  missing = []
+  for env in ['water', 'protein']:
+    for state in ['stateA', 'stateB']:
+      ions_file_path = os.path.join(_OUT_PATH.value, _LIG_DIR.value, env, state, 'ions.pdb')
+      if not os.path.isfile(ions_file_path):
+        missing.append(ions_file_path)
+  
+  if len(missing) > 0:
+    logging.error("!!! Not all systems were successfully assembled !!!")
+    for f in missing:
+      logging.error(f'Missing "{f}"')
+    raise FileExistsError('not all ions.pdb files were created')
 
 
 def main(_):
@@ -524,20 +550,27 @@ def main(_):
   logging.info('Building simulation box.')
   fe.boxWaterIons()
 
+  # Check we have the input ions.pdb files for all systems.
+  _validate_system_assembly()
+
   # Energy minimization.
   logging.info('Running energy minimizations.')
   tpr_files = fe.prepare_simulation(simType='em')
+  # Check mdrun input has been created.
+  _validate_tpr_generation('em')
   # Read the TPR files and run all minimizations.
   run_all_tprs(tpr_files, pmegpu=False)
   
   # Short equilibrations.
   logging.info('Running equilibration.')
   tpr_files = fe.prepare_simulation(simType='eq_posre', prevSim='em')
+  _validate_tpr_generation('eq_posre')
   run_all_tprs(tpr_files, pmegpu=True)
   
   # Equilibrium simulations.
   logging.info('Running production equilibrium simulations.')
   tpr_files = fe.prepare_simulation(simType='eq', prevSim='eq_posre')
+  _validate_tpr_generation('eq')
   run_all_tprs(tpr_files, pmegpu=True)
 
   # Non-equilibrium simulations.
