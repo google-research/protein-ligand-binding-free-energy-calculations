@@ -150,7 +150,7 @@ def mdrun(tpr: str, pmegpu: bool = True) -> None:
   parameter_pack = _build_mdrun_args(tpr, pmegpu)
 
   # Run mdrun.
-  process = subprocess.run(parameter_pack, check=False, capture_output=True)
+  process = subprocess.run(parameter_pack, check=False, capture_output=True, text=True)
   if process.returncode != 0:
     # Mark simulation as failed.
     open(os.path.join(simpath, '_FAILED'), 'w+').close()
@@ -158,7 +158,7 @@ def mdrun(tpr: str, pmegpu: bool = True) -> None:
     logging.error(f'  ... simulation failed (returned non-zero exit status {process.returncode})')
     # Show the last output from Gromacs for ease of debugging.
     logging.error('='*30 + 'last 20 lines of Gromacs stderr' + '='*30)
-    _gmx_stderr = "\n".join(process.stderr.decode().splitlines()[-20:])
+    _gmx_stderr = "\n".join(process.stderr.splitlines()[-20:])
     logging.error(_gmx_stderr)
     logging.error('='*30 + '='*31 + '='*30)
     return
