@@ -11,7 +11,15 @@ from absl import app
 from absl import flags
 from absl import logging
 
+from logging import DEBUG
+
 import gmxapi as gmx
+from gmxapi import logger
+
+
+mdrun_logger = logger.getChild("mdrun")
+mdrun_logger.setLevel(DEBUG)
+
 
 _DATA_DIR = flags.DEFINE_string('data_dir', None, 'data directory')
 _TPR_FILE = flags.DEFINE_string('tpr_file', None, 'tpr file')
@@ -19,25 +27,26 @@ _NUM_MPI = flags.DEFINE_integer('num_mpi', 1,
                                 'The number of thread-MPI processes.')
 _NUM_THREADS = flags.DEFINE_integer('num_threads', 4,
                                     'The number of OpenMP threads.')
-
-# Sets a session ID for this session.
-_SESSION_ID = str(int(time.time()))
-
-
-# Monkey patch this session ID into the gmxapi.operation.ResourceManager.
-# Hack. Do not use in the user code.
-# This is temporarily added to allow users to start from a new set of working
-# directories for all the mdrun launches. GMX API doesn't expose the
-# underlying resource manager or context yet.
-def operation_id(self):
-  # pylint: disable=protected-access
-  return f'{self._base_operation_id}_{_SESSION_ID}'
-
-
-gmx.operation.ResourceManager.operation_id = property(operation_id)
+_N_STEPS = flags.DEFINE_integer('n_steps', -2,
+                                'The number of simulations steps.')
+_REP_ID = flags.DEFINE_integer('replica_id', 0,
+    'Hyperparam that identifies the replica of this run.')
 
 
 def main(_):
+  # Sets a session ID for this session.
+  _SESSION_ID = str(int(time.time())) + '_' + str(_REP_ID.value)
+
+  # Monkey patch this session ID into the gmxapi.operation.ResourceManager.
+  # Hack. Do not use in the user code.
+  # This is temporarily added to allow users to start from a new set of working
+  # directories for all the mdrun launches. GMX API doesn't expose the
+  # underlying resource manager or context yet.
+  def operation_id(self):
+    # pylint: disable=protected-access
+    return f'{self._base_operation_id}_{_SESSION_ID}'
+  gmx.operation.ResourceManager.operation_id = property(operation_id)
+
   logging.info('Job started.')
 
   if not _DATA_DIR.value:
@@ -50,6 +59,7 @@ def main(_):
   logging.info('Change workdir to %s', _DATA_DIR.value)
   os.chdir(_DATA_DIR.value)
   input_tpr = gmx.read_tpr(_TPR_FILE.value)
+
   md = gmx.mdrun(
       input_tpr,
       runtime_args={
@@ -60,7 +70,8 @@ def main(_):
           '-deffnm': os.path.splitext(_TPR_FILE.value)[0],
           '-ntmpi': str(_NUM_MPI.value),
           '-ntomp': str(_NUM_THREADS.value),
-          '-pin': 'on'
+          '-pin': 'on',
+          '-nsteps': str(_N_STEPS.value),
       })
 
   md.run()
@@ -69,4 +80,4 @@ def main(_):
 
 if __name__ == '__main__':
   app.run(main)
-  
+

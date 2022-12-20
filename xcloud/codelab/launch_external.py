@@ -59,6 +59,8 @@ _NUM_MPI = flags.DEFINE_integer('num_mpi', 1,
                                 'The number of thread-MPI processes.')
 _NUM_THREADS = flags.DEFINE_integer('num_threads', 4,
                                     'The number of OpenMP threads.')
+_N_STEPS = flags.DEFINE_integer('n_steps', -2,
+                                'The number of simulations steps.')
 
 flags.adopt_module_key_flags(gcs)  # Registers flag --xm_gcs_path.
 
@@ -74,6 +76,7 @@ def _gromacs_pkgs() -> xm.Packageable:
       'tpr_file': _TPR_FILE.value,
       'num_mpi': _NUM_MPI.value,
       'num_threads': _NUM_THREADS.value,
+      'n_steps': _N_STEPS.value,
   }
   return [
       xm.python_container(
