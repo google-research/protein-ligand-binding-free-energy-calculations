@@ -125,7 +125,7 @@ def _build_mdrun_args(tpr: str, pmegpu: bool) -> List:
                    '-bonded', _bonded,
                    '-ntmpi', str(_NUM_MPI.value),
                    '-ntomp', str(_NUM_THREADS.value),
-                   '-pin', 'on']
+                   '-pin', 'off']
 
   return parameter_pack
 
@@ -441,6 +441,13 @@ def setup_abfe_obj_and_output_dir() -> AbsoluteDG:
   # Set the number of replicas (i.e., number of equilibrium simulations per state).
   fe.replicas = _NUM_REPEATS.value
 
+  # Force field and other settings.
+  fe.ff = 'amber99sb-star-ildn-mut.ff'
+  fe.boxshape = 'dodecahedron'
+  fe.boxd = 1.2
+  fe.water = 'tip3p'
+  fe.conc = 0.15
+
   # Prepare the directory structure with all simulations steps required.
   fe.simTypes = ['em',  # Energy minimization.
                  'eq_posre',  # Equilibrium sim with position restraints.
@@ -484,7 +491,7 @@ def _validate_tpr_generation(sim_stage):
   missing = []
   for env in ['water', 'protein']:
     for state in ['stateA', 'stateB']:
-      for n in _NUM_REPEATS.value:
+      for n in range(1, _NUM_REPEATS.value + 1):
         tpr_file_path = os.path.join(_OUT_PATH.value, _LIG_DIR.value, env, state, f'run{n}', sim_stage, 'tpr.tpr')
         if not os.path.isfile(tpr_file_path):
           missing.append(tpr_file_path)
@@ -525,6 +532,9 @@ def main(_):
       'INFO': logging.INFO,
       'ERROR': logging.ERROR
   }
+
+  # Set env var GMXLIB so that Gromacs can use force fields in PMX.
+  pmx.gmx.set_gmxlib()
 
   # We call this first to create the folder for the job, and place the log
   # file in this path.
