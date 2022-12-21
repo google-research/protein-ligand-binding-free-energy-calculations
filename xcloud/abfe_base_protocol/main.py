@@ -23,6 +23,7 @@ import time
 import random
 import glob
 import scipy
+import math
 
 from absl import app
 from absl import flags
@@ -125,7 +126,7 @@ def _build_mdrun_args(tpr: str, pmegpu: bool) -> List:
                    '-bonded', _bonded,
                    '-ntmpi', str(_NUM_MPI.value),
                    '-ntomp', str(_NUM_THREADS.value),
-                   '-pin', 'off']
+                   '-pin', 'on']
 
   return parameter_pack
 
@@ -219,9 +220,20 @@ def run_tpr(tpr_file: str, pmegpu: bool, max_restarts: int) -> None:
   end_time = time.time()
   time_elapsed = parse_time(start_time, end_time)
   if done:
-    logging.info(f"  ... simulation completed successfully in {time_elapsed} with {num_restarts-1} restarts")
+    ns_day = _get_performance_from_mdlog(mdlog=os.path.join(os.path.dirname(tpr_file), 'md.log'))
+    logging.info(f"  ... simulation completed successfully in {time_elapsed} with {num_restarts-1} restarts ({ns_day} ns/day)")
   else:
     logging.info(f"  !!! max restarts ({max_restarts}) reached, mdrun did not complete successfully")
+
+
+def _get_performance_from_mdlog(mdlog):
+  with open(mdlog, 'r') as f:
+    lines = [l for l in f.readlines() if l.split()]
+    line = [l.split()[1] for l in lines if l.split()[0] == 'Performance:']
+  if len(line) == 1:
+    return line[0]
+  else:
+    return 'N/A'
 
 
 def run_all_tprs(tpr_files, pmegpu=True):
@@ -229,7 +241,8 @@ def run_all_tprs(tpr_files, pmegpu=True):
     run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value)
 
 
-def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = True, patience: int = 2):
+def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = True, patience: int = 2, 
+                                                envs_and_precs: Dict = {'ligand': 1., 'protein': 2.}) -> None:
   """Run non-equilibrium simulations with en early stopping mechanism. If we desired 
   precision (specified by _TARGET_PRECISION) is reached in the N consecutive iterations 
   (as specified by `patience`), we terminate the execution of additional simulations. 
@@ -241,12 +254,15 @@ def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = 
       patience (int, optional): number of consecutive iterations in which target 
         precision is reached that are allowed before terminating further mdrun 
         executions. Defaults to 2.
+      envs_and_precs (dict): dictionary where the keys are the environments from which 
+        the ligand is decoupled (e.g., 'water' 'protein', 'dssb'), and the values are their
+        respective target precisions in kJ/mol.
   """
 
   # Split list of tpr files in the water/protein, state A/B, run N.
   # Also, shuffle tpr lists. This is done to ensure uniform sampling of 
   # starting points.
-  tpr_tree = _build_tpr_tree(tpr_files, shuffle=True)
+  tpr_tree = _build_tpr_tree(tpr_files, shuffle=True, envs=envs_and_precs.keys())
 
   def _execute_sims_with_early_stopping_loop(env: str, target_precision: float, patience: int) -> None:
     """Runs non-equil transitions with earaly stopping for either the water or 
@@ -257,10 +273,6 @@ def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = 
         target_precision (float): desired precision in kJ/mol.
         patience (int): patience counter.
     """
-    # Validate args.
-    _valid_envs = ['water', 'protein']
-    if env not in _valid_envs:
-        raise ValueError('`env` can only be "water" or "protein"')
 
     def _run_multiple_transitions(num_transitions: int) -> int:
       """Runs the specified number of transitions.
@@ -328,13 +340,15 @@ def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = 
       
     logging.info(f"  Terminating execution of non-equilibrium transitions in {env} environment")
 
-  # Run both water and protein sims until precision reached or run out of transitions.
-  _execute_sims_with_early_stopping_loop(env='water', 
-                                         target_precision=_TARGET_PRECISION_WAT.value, 
-                                         patience=patience)
-  _execute_sims_with_early_stopping_loop(env='protein', 
-                                         target_precision=_TARGET_PRECISION_PRO.value, 
-                                         patience=patience)
+  # Run both water and protein (or dssb) sims until precision reached or run out of transitions.
+  for env in envs_and_precs.keys():
+    target_precision = envs_and_precs[env]
+    logging.info(f'Using early stopping with target precision of {target_precision:.2f} '
+                 f'kJ/mol for {env} calcs, with an evaluation frequency of {_FREQ_PRECISION_EVAL.value} '
+                 f'and a minimum number of transitions of {_MIN_NUM_TRANSITIONS.value}.')
+    _execute_sims_with_early_stopping_loop(env=env, 
+                                           target_precision=target_precision, 
+                                           patience=patience)
 
 
 def _estimate_dg_precision(env: str = 'water', T: float = 298.15) -> float:
@@ -367,7 +381,7 @@ def _estimate_dg_precision(env: str = 'water', T: float = 298.15) -> float:
   return scipy.stats.sem(dg_estimates)
 
 
-def _build_tpr_tree(tpr_list: List, shuffle: bool = True) -> Dict:
+def _build_tpr_tree(tpr_list: List, shuffle: bool = True, envs: List = ['water', 'protein']) -> Dict:
   """Takes a list of paths to TPR files and splits them by environment (water vs protein),
   state (A vs B), and repeat number. The resulting lists are put into a dict of dicts of lists
   in tree-like structure.
@@ -383,7 +397,7 @@ def _build_tpr_tree(tpr_list: List, shuffle: bool = True) -> Dict:
         environment, state, and repeat number.
   """
   tpr_dict = {}
-  for env in ['water', 'protein']:
+  for env in envs:
     tpr_dict[env] = {}
     for state in ['stateA', 'stateB']:
       tpr_dict[env][state] = {}
@@ -420,12 +434,26 @@ def parse_time(start: float, end: float) -> str:
   return time_string
 
 
-def setup_abfe_obj_and_output_dir() -> AbsoluteDG:
+def setup_abfe_obj_and_output_dir(forcefield: str = 'amber99sb-star-ildn-mut.ff') -> AbsoluteDG:
   """Instantiates PMX object handling the setup and analysis of the calculation.
+
+  Args:
+      forcefield (str): force field to use, defined by its folder name 
+        linked in the Gromacs topology files.
 
   Returns:
       AbsoluteDG: instance handling the calculation setup/analysis.
   """
+
+  # Get net chanrge of the ligand. If it's a ligand with net charge,
+  # use double-system, single-box (DSSB) setup.
+  lig_top = pmx.forcefield.Topology(os.path.join(_TOP_PATH.value, _LIG_DIR.value, 'ligand', 'MOL.itp'), 
+                                    is_itp=True, 
+                                    ff=forcefield, 
+                                    assign_types=False, 
+                                    self_contained=True)
+
+  bDSSB = False if abs(lig_top.qA) < 1e-5 else True
 
   # Initialize the free energy environment object. It will store the main 
   # parameters for the calculations.
@@ -433,7 +461,7 @@ def setup_abfe_obj_and_output_dir() -> AbsoluteDG:
                   structTopPath=_TOP_PATH.value,  # Path to structures and topologies.
                   ligList=[_LIG_DIR.value],  # Folders with protein-ligand input files.
                   apoCase=_APO_DIR.value,  # Folders with apo protein files.
-                  bDSSB=False,
+                  bDSSB=bDSSB,
                   gmxexec=gmxapi.commandline.cli_executable().as_posix())
 
   # Set the workpath in which simulation input files will be created.
@@ -442,7 +470,7 @@ def setup_abfe_obj_and_output_dir() -> AbsoluteDG:
   fe.replicas = _NUM_REPEATS.value
 
   # Force field and other settings.
-  fe.ff = 'amber99sb-star-ildn-mut.ff'
+  fe.ff = forcefield
   fe.boxshape = 'dodecahedron'
   fe.boxd = 1.2
   fe.water = 'tip3p'
@@ -487,9 +515,9 @@ def _parse_and_validate_flags() -> List[Tuple]:
     _TARGET_PRECISION_PRO.value = 0.
 
 
-def _validate_tpr_generation(sim_stage):
+def _validate_tpr_generation(sim_stage, envs):
   missing = []
-  for env in ['water', 'protein']:
+  for env in envs:
     for state in ['stateA', 'stateB']:
       for n in range(1, _NUM_REPEATS.value + 1):
         tpr_file_path = os.path.join(_OUT_PATH.value, _LIG_DIR.value, env, state, f'run{n}', sim_stage, 'tpr.tpr')
@@ -504,9 +532,9 @@ def _validate_tpr_generation(sim_stage):
   pass
 
 
-def _validate_system_assembly():
+def _validate_system_assembly(envs):
   missing = []
-  for env in ['water', 'protein']:
+  for env in envs:
     for state in ['stateA', 'stateB']:
       ions_file_path = os.path.join(_OUT_PATH.value, _LIG_DIR.value, env, state, 'ions.pdb')
       if not os.path.isfile(ions_file_path):
@@ -547,6 +575,22 @@ def main(_):
 
   logging.info('===== ABFE calculation started =====')
   logging.info('AbsoluteDG object has been instantiated.')
+  # Log if charged ligand, and store environments from which the ligand will be
+  # decoupled. This is used to know which folders and simulations to expect.
+  if fe.bDSSB:
+    _environments = ['dssb']
+    logging.info('Ligand with net charge identified. We will use a DSSB setup.')
+    # Since we don't have separate water and protein dG estimates anymore, propagate
+    # uncertainty to get overall target precision.
+    if _TARGET_PRECISION_WAT.value > 1e-5 or _TARGET_PRECISION_PRO.value > 1e-5:
+      _target_precision_dssb = math.sqrt(_TARGET_PRECISION_WAT.value **2 + _TARGET_PRECISION_PRO.value **2)
+      _environments_and_precisions = {'dssb': _target_precision_dssb}
+      logging.info(f'Target DSSB precision set to {_target_precision_dssb:.2f} kJ/mol.')
+  else:
+    _environments = ['water', 'protein']
+    _environments_and_precisions = {'water':_TARGET_PRECISION_WAT.value, 'protein': _TARGET_PRECISION_PRO.value}
+
+  # cd to workdir.
   logging.info('Changing workdir to %s', _OUT_PATH.value)
   os.chdir(_OUT_PATH.value)
 
@@ -561,37 +605,36 @@ def main(_):
   fe.boxWaterIons()
 
   # Check we have the input ions.pdb files for all systems.
-  _validate_system_assembly()
+  _validate_system_assembly(envs=_environments)
 
   # Energy minimization.
   logging.info('Running energy minimizations.')
   tpr_files = fe.prepare_simulation(simType='em')
   # Check mdrun input has been created.
-  _validate_tpr_generation('em')
+  _validate_tpr_generation(sim_stage='em', envs=_environments)
   # Read the TPR files and run all minimizations.
   run_all_tprs(tpr_files, pmegpu=False)
   
   # Short equilibrations.
   logging.info('Running equilibration.')
   tpr_files = fe.prepare_simulation(simType='eq_posre', prevSim='em')
-  _validate_tpr_generation('eq_posre')
+  _validate_tpr_generation(sim_stage='eq_posre', envs=_environments)
   run_all_tprs(tpr_files, pmegpu=True)
   
   # Equilibrium simulations.
   logging.info('Running production equilibrium simulations.')
   tpr_files = fe.prepare_simulation(simType='eq', prevSim='eq_posre')
-  _validate_tpr_generation('eq')
+  _validate_tpr_generation(sim_stage='eq', envs=_environments)
   run_all_tprs(tpr_files, pmegpu=True)
 
   # Non-equilibrium simulations.
   logging.info('Running alchemical transitions.')
   tpr_files = fe.prepare_simulation(simType='transitions')
   if _TARGET_PRECISION_WAT.value > 1e-5 or _TARGET_PRECISION_PRO.value > 1e-5:
-    logging.info(f'Using early stopping with target precision of {_TARGET_PRECISION_WAT.value} '
-                 f'kJ/mol for water calcs, {_TARGET_PRECISION_PRO.value} kJ/mol for protein calcs, '
-                 f'evaluation frequency of {_FREQ_PRECISION_EVAL.value}, and a minimum number of '
-                 f'transitions of {_MIN_NUM_TRANSITIONS.value}.')
-    run_all_transition_tprs_with_early_stopping(tpr_files, pmegpu=True, patience=_PATIENCE.value)
+    run_all_transition_tprs_with_early_stopping(tpr_files, 
+                                                pmegpu=True, 
+                                                patience=_PATIENCE.value, 
+                                                envs_and_precs=_environments_and_precisions)     
   else:
     run_all_tprs(tpr_files, pmegpu=True)
   
