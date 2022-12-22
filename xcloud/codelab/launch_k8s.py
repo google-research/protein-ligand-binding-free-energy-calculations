@@ -11,35 +11,33 @@ Usage:
 Prerequisites:
 1) Install XManager with `pip install git+https://github.com/deepmind/xmanager.git`
 2) Create a GCP project and install `gcloud` (https://cloud.google.com/sdk/docs/install)
-3) Associate your Google Account (Gmail account) with your GCP project by running:
+3) Log in to your GCP project by running:
 
 ```
 export GCP_PROJECT=<GCP PROJECT ID>
 gcloud auth login
 gcloud auth application-default login
 gcloud config set project $GCP_PROJECT
+gcloud auth configure-docker
 ```
 
-4) Set up gcloud to work with Docker by running `gcloud auth configure-docker`
-5) Enable Google Cloud Platform APIs.
-* Enable IAM.
-* Enable the 'Cloud AI Platfrom'.
-* Enable the 'Container Registry'.
-* Enable the 'Vertex AI'.
+4) Get GKE cluster credentials:
+```
+gcloud container clusters get-credentials <your_cluster_name> --zone <your_zone>
+```
 
-6) Create a staging bucket if you do not already have one. Run the following command
+Launch the workloads to your GKE cluster:
 
-`export GOOGLE_CLOUD_BUCKET_NAME=<GOOGLE_CLOUD_BUCKET_NAME>`
-
-7) Upload a TPR file to the staging bucket, for example to the path 
-${GOOGLE_CLOUD_BUCKET_NAME}/${USER}/benchmark.tpr, run the following command.
+5) Upload a TPR file to the staging bucket, for example to the path 
+GOOGLE_CLOUD_BUCKET_NAME/SOME_DIR/benchmark.tpr, run the following command.
 
 xmanager launch \
-  xcloud/codelab/launch_external.py -- \
-    --xm_gcs_path="/gcs/${GOOGLE_CLOUD_BUCKET_NAME}/${USER}" \
-    --tpr_file=benchmark.tpr
+  xcloud/codelab/launch_k8s.py -- \
+    --xm_gcs_path="/gcs/GOOGLE_CLOUD_BUCKET_NAME/SOME_DIR" \
+    --tpr_file=benchmark.tpr ...
 """
 
+## Please keep these imports with your scripts ##
 from absl import app
 from absl import flags
 from absl import logging
@@ -56,6 +54,7 @@ from xmanager.cloud.kubernetes import requirements_from_executor
 from xmanager.cloud.kubernetes import node_selector_from_executor
 from xmanager.cloud.kubernetes import annotations_from_executor
 from xmanager.contrib import gcs
+## End import ##
 
 
 _GPU_TYPE = flags.DEFINE_string('gpu_type', 't4',
@@ -77,6 +76,9 @@ _NUM_REPLICAS = flags.DEFINE_integer('n_replicas', 1,
 
 flags.adopt_module_key_flags(gcs)  # Registers flag --xm_gcs_path.
 
+
+################## DO NOT MODIFY #################
+######### PLEASE COPY OVER TO YOUR SCRIPT ########
 
 # Monkey patch the cloud kubernetes launch functions
 def _requirements_from_executor(executor):
@@ -152,6 +154,8 @@ def _launch(
 
 kubernetes.Client.launch = _launch
 
+################### DO NOT MODIFY END ###################
+#########################################################
 
 def _gromacs_pkgs() -> xm.Packageable:
   """Returns a contructed python container for running Gromacs simulations.
