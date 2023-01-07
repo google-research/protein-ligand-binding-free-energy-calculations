@@ -36,6 +36,20 @@ flags.mark_flag_as_required("input_path")
 flags.mark_flag_as_required("output_path")
 flags.mark_flag_as_required("proteins")
 
+_COLORS = {
+    'blue': '\033[94m',
+    'default': '\033[99m',
+    'grey': '\033[90m',
+    'yellow': '\033[93m',
+    'black': '\033[90m',
+    'cyan': '\033[96m',
+    'green': '\033[92m',
+    'magenta': '\033[95m',
+    'white': '\033[97m',
+    'red': '\033[91m',
+    'endc': '\033[0m'
+}
+
 
 def _parse_protein_str(protein_str: str) -> List:
   return [i for i in protein_str.split(',')]
@@ -78,9 +92,9 @@ def _get_status_from_log(log_file):
     lines = f.readlines()
   
   if 'completed' in lines[-1]:
-    return 'COMPLETED'
+    return f"{_COLORS['green']}COMPLETED{_COLORS['endc']}"
   else:
-    return 'RUNNING (OR CRASHED)'
+    return f"{_COLORS['blue']}RUNNING (OR CRASHED){_COLORS['endc']}"
 
 
 def main(argv):
@@ -106,7 +120,7 @@ def main(argv):
         log_file = os.path.join(log_dir, ligand_to_log_dict[ligand])
         status = _get_status_from_log(log_file)
       else:
-        status = ''
+        status = f"{_COLORS['grey']}MISSING{_COLORS['endc']}"
 
       print(f"{ligand:<40}{status}")
     print('=' * s)
