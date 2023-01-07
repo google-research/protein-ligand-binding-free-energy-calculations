@@ -186,7 +186,12 @@ def _mdrun_completed(simpath):
     return False
 
 
-def run_tpr(tpr_file: str, pmegpu: bool, max_restarts: int) -> None:
+class FailedSimulationException(Exception):
+  "Raised when a simulation crashed/failed"
+  pass
+
+
+def run_tpr(tpr_file: str, pmegpu: bool, max_restarts: int, fault_tolerant: bool) -> None:
   """Run the simulation associated with a TPR file. But it checks if the simulation
   was already run, and tries to restart it if it crashes.
 
@@ -224,6 +229,8 @@ def run_tpr(tpr_file: str, pmegpu: bool, max_restarts: int) -> None:
     logging.info(f"  ... simulation completed successfully in {time_elapsed} with {num_restarts-1} restarts ({ns_day} ns/day)")
   else:
     logging.info(f"  !!! max restarts ({max_restarts}) reached, mdrun did not complete successfully")
+    if not fault_tolerant:
+      raise FailedSimulationException()
 
 
 def _get_performance_from_mdlog(mdlog):
@@ -236,9 +243,9 @@ def _get_performance_from_mdlog(mdlog):
     return 'N/A'
 
 
-def run_all_tprs(tpr_files, pmegpu=True):
+def run_all_tprs(tpr_files, pmegpu=True, fault_tolerant=True):
   for tpr_file in tpr_files:
-    run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value)
+    run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value, fault_tolerant=fault_tolerant)
 
 
 def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = True, patience: int = 2, 
@@ -291,7 +298,7 @@ def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = 
             # Check the list is not empty (i.e. we ran all sims already).
             if tpr_tree[env][state][run]:
               tpr_file = tpr_tree[env][state][run].pop(0)
-              run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value)
+              run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value, fault_tolerant=True)
               _num_transitions_actually_run += 1
       return _num_transitions_actually_run
 
@@ -613,19 +620,19 @@ def main(_):
   # Check mdrun input has been created.
   _validate_tpr_generation(sim_stage='em', envs=_environments)
   # Read the TPR files and run all minimizations.
-  run_all_tprs(tpr_files, pmegpu=False)
+  run_all_tprs(tpr_files, pmegpu=False, fault_tolerant=False)
   
   # Short equilibrations.
   logging.info('Running equilibration.')
   tpr_files = fe.prepare_simulation(simType='eq_posre', prevSim='em')
   _validate_tpr_generation(sim_stage='eq_posre', envs=_environments)
-  run_all_tprs(tpr_files, pmegpu=True)
+  run_all_tprs(tpr_files, pmegpu=True, fault_tolerant=False)
   
   # Equilibrium simulations.
   logging.info('Running production equilibrium simulations.')
   tpr_files = fe.prepare_simulation(simType='eq', prevSim='eq_posre')
   _validate_tpr_generation(sim_stage='eq', envs=_environments)
-  run_all_tprs(tpr_files, pmegpu=True)
+  run_all_tprs(tpr_files, pmegpu=True, fault_tolerant=False)
 
   # Non-equilibrium simulations.
   logging.info('Running alchemical transitions.')
@@ -636,7 +643,7 @@ def main(_):
                                                 patience=_PATIENCE.value, 
                                                 envs_and_precs=_environments_and_precisions)     
   else:
-    run_all_tprs(tpr_files, pmegpu=True)
+    run_all_tprs(tpr_files, pmegpu=True, fault_tolerant=True)
   
   # Analysis.
   logging.info('Analyzing results.')
