@@ -15,9 +15,12 @@
 r"""Script to summarize the status of ABFE calculations running on GCP.
 """
 
+
 from typing import List
 import subprocess
 import os
+import shutil
+import tempfile
 
 from absl import app
 from absl import flags
@@ -45,28 +48,39 @@ def _get_ligand_folders(gs_path):
   return ligands
 
 
-def _get_log_file(gs_path, ligand):
-  process = subprocess.run(f'gsutil ls -d gs://{gs_path}/{ligand}/abfe.*.INFO*',
+def _copy_log_files(gs_path):
+  # List all logs.
+  process = subprocess.run(f'gsutil ls gs://{gs_path}/ligand_*/abfe.*.INFO*',
                              shell=True, capture_output=True, text=True)
-  log_file = [f for f in process.stdout.split('\n') if f]
-  if len(log_file) < 1:
-    return ''
-  elif len(log_file) == 1:
-    return log_file[0]
-  else:
-    raise ValueError()
+  log_files = [f for f in process.stdout.split('\n') if f]
+  
+  # If empty just return empty dict.
+  if len(log_files) < 1:
+    return {}
+
+  # Copy log files.
+  temp_dir = tempfile.mkdtemp()
+  process = subprocess.run(f'gsutil -m cp gs://{gs_path}/ligand_*/abfe.*.INFO* {temp_dir}/',
+                             shell=True, capture_output=True, text=True)
+
+  # Create ligand -> log map.
+  ligand_to_log = {}
+  for log_file_path in log_files:
+    ligand = log_file_path.split('/')[-2]
+    log_fname = log_file_path.split('/')[-1]
+    ligand_to_log[ligand] = log_fname
+
+  return ligand_to_log, temp_dir
 
 
 def _get_status_from_log(log_file):
-  if not log_file:
-    return '...'
-
-  process = subprocess.run(f'gsutil cat {log_file} | tail -n 1',
-                           shell=True, capture_output=True, text=True)
-  if 'completed' in process.stdout:
+  with open(log_file, 'r') as f:
+    lines = f.readlines()
+  
+  if 'completed' in lines[-1]:
     return 'COMPLETED'
   else:
-    return 'RUNNING'
+    return 'RUNNING (OR CRASHED)'
 
 
 def main(argv):
@@ -80,18 +94,26 @@ def main(argv):
     gs_path_output = os.path.join(_OUT_PATH.value, protein)
 
     ligands = _get_ligand_folders(f'gs://{gs_path_input}/ligand_*/')
+    ligand_to_log_dict, log_dir = _copy_log_files(gs_path_output)
 
-    print('=' * 50)
+    s = 60
+    print('=' * s)
     name = gs_path_input.split('/')[-1]
-    print(name.center(50))
-    print('=' * 50)
+    print(name.center(s))
+    print('=' * s)
     for ligand in ligands:
-      log_file = _get_log_file(gs_path_output, ligand)
-      status = _get_status_from_log(log_file)
+      if ligand in ligand_to_log_dict.keys():
+        log_file = os.path.join(log_dir, ligand_to_log_dict[ligand])
+        status = _get_status_from_log(log_file)
+      else:
+        status = ''
+
       print(f"{ligand:<40}{status}")
-    print('=' * 50)
+    print('=' * s)
     print('')
 
+    # rm logs.
+    shutil.rmtree(log_dir)
 
 if __name__ == '__main__':
   app.run(main)
