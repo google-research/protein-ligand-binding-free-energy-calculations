@@ -615,28 +615,28 @@ def main(_):
   _validate_system_assembly(envs=_environments)
 
   # Energy minimization.
-  logging.info('Running energy minimizations.')
   tpr_files = fe.prepare_simulation(simType='em')
+  logging.info(f'Running energy minimizations [{len(tpr_files)}].')
   # Check mdrun input has been created.
   _validate_tpr_generation(sim_stage='em', envs=_environments)
   # Read the TPR files and run all minimizations.
   run_all_tprs(tpr_files, pmegpu=False, fault_tolerant=False)
   
   # Short equilibrations.
-  logging.info('Running equilibration.')
   tpr_files = fe.prepare_simulation(simType='eq_posre', prevSim='em')
+  logging.info(f'Running equilibration [{len(tpr_files)}].')
   _validate_tpr_generation(sim_stage='eq_posre', envs=_environments)
   run_all_tprs(tpr_files, pmegpu=True, fault_tolerant=False)
   
   # Equilibrium simulations.
-  logging.info('Running production equilibrium simulations.')
   tpr_files = fe.prepare_simulation(simType='eq', prevSim='eq_posre')
+  logging.info(f'Running production equilibrium simulations [{len(tpr_files)}].')
   _validate_tpr_generation(sim_stage='eq', envs=_environments)
   run_all_tprs(tpr_files, pmegpu=True, fault_tolerant=False)
 
   # Non-equilibrium simulations.
-  logging.info('Running alchemical transitions.')
   tpr_files = fe.prepare_simulation(simType='transitions')
+  logging.info(f'Running alchemical transitions [{len(tpr_files)}].')
   if _TARGET_PRECISION_WAT.value > 1e-5 or _TARGET_PRECISION_PRO.value > 1e-5:
     run_all_transition_tprs_with_early_stopping(tpr_files, 
                                                 pmegpu=True, 
