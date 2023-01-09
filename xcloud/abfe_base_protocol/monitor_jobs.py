@@ -87,14 +87,94 @@ def _copy_log_files(gs_path):
   return ligand_to_log, temp_dir
 
 
-def _get_status_from_log(log_file):
+def _job_is_completed(log_file):
   with open(log_file, 'r') as f:
     lines = f.readlines()
   
-  if 'completed' in lines[-1]:
-    return f"{_COLORS['green']}COMPLETED{_COLORS['endc']}"
+  if 'Job completed' in lines[-1]:
+    return True
   else:
-    return f"{_COLORS['blue']}RUNNING (OR CRASHED){_COLORS['endc']}"
+    return False
+
+
+def _get_abfe_stage_from_log(log_file):
+  with open(log_file, 'r') as f:
+    lines = f.read()
+
+  if 'Job completed' in lines:
+    return 'completed'
+
+  if 'Analyzing results' in lines:
+    return 'analysis'
+
+  if 'Running alchemical transitions' in lines:
+    return 'transitions'
+
+  if 'Running production equilibrium simulations' in lines:
+    return 'equil sims'
+
+  if 'Running equilibration' in lines:
+    return 'equilibration'
+  
+  if 'Running energy minimizations' in lines:
+    return 'energy minimization'
+
+  if 'Assembling simulation systems' in lines:
+    return 'system setup'
+
+  return 'unkwown'
+
+
+def _get_stage_progress_from_log(log_file):
+  with open(log_file, 'r') as f:
+    lines = f.read().splitlines()
+
+  num_tpr_run = 0
+  for line in reversed(lines):
+    if '-->' in line:
+      num_tpr_run += 1
+    if 'Running ' in line:
+      if '[' in line:
+        num_tpr_total = line.split('[')[-1].split(']')[0]
+      else:
+        num_tpr_total = '?'
+      break
+
+  return f'{num_tpr_run}/{num_tpr_total}'
+
+
+def _get_running_and_pending_jobs(region='us-central1'):
+  
+  process = subprocess.run(f'gcloud ai custom-jobs list --project="abfe-364520" --region={region} --filter="state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING"',
+                             shell=True, capture_output=True, text=True)
+  jobs_info = process.stdout.split('---')
+  
+  # Add '{protein}/{ligand}' to this list if job running.
+  running_jobs = []
+  pending_jobs = []
+
+  for job_info in jobs_info:
+    lines = job_info.split('\n')
+    ligand = None
+    protein = None
+    state = None
+    for line in lines:
+      if 'state: ' in line:
+        state = line.replace('state: ', '')
+      if '--lig_dir' in line:
+        ligand = line.split('=')[-1]
+      # TODO: find better way to get target name (i.e. output location)
+      # This relies on a specific job name structure.
+      if 'displayName' in line:
+        protein = line.replace('displayName: ', '').split('_')[1]
+
+    job_key = f'{protein}/{ligand}'
+    if state == 'JOB_STATE_RUNNING':
+      running_jobs.append(job_key)
+    elif state == 'JOB_STATE_PENDING':
+      pending_jobs.append(job_key)
+
+  return running_jobs, pending_jobs
 
 
 def main(argv):
@@ -102,32 +182,51 @@ def main(argv):
     raise app.UsageError('Too many command-line arguments.')
 
   proteins = _parse_protein_str(_PROTEINS.value)
+  running_jobs, pending_jobs = _get_running_and_pending_jobs()
+
+  # Table headers.
+  s = 90
+  print()
+  title = '> ' + _OUT_PATH.value + ' <'
+  print(f'{title:^{s}}')
+  print('=' * s)
+  print(f'{"Protein":<12}{"Ligand":<30}{"Job State":<15}{"ABFE Stage":<22}{"Progress"}')
   
   for protein in proteins:
+    print('-' * s)
     gs_path_input = os.path.join(_INP_PATH.value, protein)
     gs_path_output = os.path.join(_OUT_PATH.value, protein)
 
     ligands = _get_ligand_folders(f'gs://{gs_path_input}/ligand_*/')
     ligand_to_log_dict, log_dir = _copy_log_files(gs_path_output)
-
-    s = 60
-    print('=' * s)
-    name = gs_path_input.split('/')[-1]
-    print(name.center(s))
-    print('=' * s)
+    
     for ligand in ligands:
+      abfe_stage = ''
+      progress = ''
       if ligand in ligand_to_log_dict.keys():
         log_file = os.path.join(log_dir, ligand_to_log_dict[ligand])
-        status = _get_status_from_log(log_file)
+        abfe_stage = _get_abfe_stage_from_log(log_file)
+        progress = _get_stage_progress_from_log(log_file)
+        if f'{protein}/{ligand}' in running_jobs:
+          state = f"{_COLORS['white']}RUNNING{_COLORS['endc']}"
+        else:
+          if _job_is_completed(log_file):
+            state = f"{_COLORS['green']}COMPLETED{_COLORS['endc']}"
+          else:
+            state = f"{_COLORS['red']}CRASHED{_COLORS['endc']}"
       else:
-        status = f"{_COLORS['grey']}MISSING{_COLORS['endc']}"
+        if f'{protein}/{ligand}' in pending_jobs:
+          state = f"{_COLORS['grey']}PENDING{_COLORS['endc']}"
+        else:
+          state = f"{_COLORS['yellow']}MISSING{_COLORS['endc']}"
 
-      print(f"{ligand:<40}{status}")
-    print('=' * s)
-    print('')
+      print(f'{protein:<12}{ligand:<30}{state:<24}{abfe_stage:<22}{progress}')
 
     # rm logs.
     shutil.rmtree(log_dir)
+
+  print('=' * s)
+  print()
 
 if __name__ == '__main__':
   app.run(main)
