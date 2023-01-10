@@ -55,6 +55,10 @@ def _parse_protein_str(protein_str: str) -> List:
   return [i for i in protein_str.split(',')]
 
 
+def argmax(a):
+  return max(range(len(a)), key=lambda x : a[x])
+
+
 def _get_ligand_folders(gs_path):
   process = subprocess.run(f'gsutil ls -d {gs_path}',
                              shell=True, capture_output=True, text=True)
@@ -80,9 +84,23 @@ def _copy_log_files(gs_path):
   # Create ligand -> log map.
   ligand_to_log = {}
   for log_file_path in log_files:
+    # Becuase if it's a restarted job we might have >1 logfiles
+    # and we need to identify the latest one.
     ligand = log_file_path.split('/')[-2]
     log_fname = log_file_path.split('/')[-1]
-    ligand_to_log[ligand] = log_fname
+    if ligand not in ligand_to_log.keys():
+      ligand_to_log[ligand] = []
+    ligand_to_log[ligand].append(log_fname)
+
+  # Resolve which log to use if >1 log files.
+  for ligand in ligand_to_log.keys():
+    if len(ligand_to_log[ligand]) == 1:
+      ligand_to_log[ligand] = ligand_to_log[ligand][0]
+    else:
+      logs = ligand_to_log[ligand]
+      datetimes = [int(log.split('.INFO.')[-1].replace('-', '').replace('.', '')) for log in logs]
+      idx_latest = argmax(datetimes)
+      ligand_to_log[ligand] = logs[idx_latest]
 
   return ligand_to_log, temp_dir
 
