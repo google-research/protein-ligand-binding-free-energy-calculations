@@ -5,14 +5,13 @@ ENV DEBIAN_FRONTEND noninteractive
 WORKDIR /root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends cmake wget python3 \
-    python3-dev python3-pip
+    python3-dev python3-pip git
 
 RUN pip3 install --upgrade pip setuptools wheel cmake pybind11
 
-# Install Gromacs 2023-rc1 and its Python API
-RUN wget https://ftp.gromacs.org/gromacs/gromacs-2023-rc1.tar.gz && \
-    tar xvf gromacs-2023-rc1.tar.gz && \
-    cd gromacs-2023-rc1 && \
+# Install Gromacs dev branch gpu-update-sd and its Python API
+RUN git clone https://gitlab.com/gromacs/gromacs.git && \
+    cd gromacs && git checkout gpu-update-sd && \
     mkdir build && cd build && \
     cmake .. -DCMAKE_C_COMPILER=gcc \
              -DCMAKE_CXX_COMPILER=g++ \
