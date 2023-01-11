@@ -70,7 +70,7 @@ def main(_):
           '-deffnm': os.path.splitext(_TPR_FILE.value)[0],
           '-ntmpi': str(_NUM_MPI.value),
           '-ntomp': str(_NUM_THREADS.value),
-          '-pin': 'on',
+          '-pin': 'off',
           '-nsteps': str(_N_STEPS.value),
       })
 
