@@ -126,7 +126,7 @@ def _build_mdrun_args(tpr: str, pmegpu: bool) -> List:
                    '-bonded', _bonded,
                    '-ntmpi', str(_NUM_MPI.value),
                    '-ntomp', str(_NUM_THREADS.value),
-                   '-pin', 'on']
+                   '-pin', 'off']
 
   return parameter_pack
 
@@ -243,9 +243,16 @@ def _get_performance_from_mdlog(mdlog):
     return 'N/A'
 
 
+def _log_progress(num_sim_run: int, num_sim_total: int) -> None:
+  percent_completion = int(round((num_sim_run) / num_sim_total * 100., 0))
+  logging.info(f"  ... progress: {num_sim_run}/{num_sim_total} ({percent_completion} %)")
+
+
 def run_all_tprs(tpr_files, pmegpu=True, fault_tolerant=True):
-  for tpr_file in tpr_files:
+  num_sim_total = len(tpr_files)
+  for i, tpr_file in enumerate(tpr_files):
     run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value, fault_tolerant=fault_tolerant)
+    _log_progress(num_sim_run=i+1, num_sim_total=num_sim_total)
 
 
 def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = True, patience: int = 2, 
@@ -265,6 +272,9 @@ def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = 
         the ligand is decoupled (e.g., 'water' 'protein', 'dssb'), and the values are their
         respective target precisions in kJ/mol.
   """
+  # To log progress.
+  num_sim_total = len(tpr_files)  # Total number of transitions.
+  num_sim_run = 0  # Number of transitions executed.
 
   # Split list of tpr files in the water/protein, state A/B, run N.
   # Also, shuffle tpr lists. This is done to ensure uniform sampling of 
@@ -300,6 +310,9 @@ def run_all_transition_tprs_with_early_stopping(tpr_files: List, pmegpu: bool = 
               tpr_file = tpr_tree[env][state][run].pop(0)
               run_tpr(tpr_file, pmegpu, max_restarts=_MAX_RESTARTS.value, fault_tolerant=True)
               _num_transitions_actually_run += 1
+              # Logging.
+              num_sim_run += 1
+              _log_progress(num_sim_run=num_sim_run, num_sim_total=num_sim_total)
       return _num_transitions_actually_run
 
     def _evaluate_precision_and_update_patience(target_precision: float, _patience: int) -> int:
