@@ -148,14 +148,13 @@ def _get_stage_progress_from_log(log_file):
     lines = f.read().splitlines()
 
   num_tpr_run = 0
+  num_tpr_total = '?'
   for line in reversed(lines):
     if '-->' in line:
       num_tpr_run += 1
     if 'Running ' in line:
       if '[' in line:
-        num_tpr_total = line.split('[')[-1].split(']')[0]
-      else:
-        num_tpr_total = '?'
+        num_tpr_total = line.split('[')[-1].split(']')[0]        
       break
 
   return f'{num_tpr_run}/{num_tpr_total}'
