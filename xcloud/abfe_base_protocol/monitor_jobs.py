@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-r"""Script to summarize the status of ABFE calculations running on GCP.
-"""
+r"""Script to summarize the status of ABFE calculations running on GCP."""
 
 
 from typing import List
@@ -27,14 +26,22 @@ from absl import flags
 
 
 # Flags about paths.
-_INP_PATH = flags.DEFINE_string('input_path', None, 'GCS path to input files for calculations.')
-_OUT_PATH = flags.DEFINE_string('output_path', None, 'GCS path to output files of calculations.')
-_PROTEINS = flags.DEFINE_string('proteins', None, 'Folder names of target proteins (comma-separated list, e.g. "cmet,jnk1").')
+_INP_PATH = flags.DEFINE_string(
+    'input_path', None, 'GCS path to input files for calculations.'
+)
+_OUT_PATH = flags.DEFINE_string(
+    'output_path', None, 'GCS path to output files of calculations.'
+)
+_PROTEINS = flags.DEFINE_string(
+    'proteins',
+    None,
+    'Folder names of target proteins (comma-separated list, e.g. "cmet,jnk1").',
+)
 
 # Required flag.
-flags.mark_flag_as_required("input_path")
-flags.mark_flag_as_required("output_path")
-flags.mark_flag_as_required("proteins")
+flags.mark_flag_as_required('input_path')
+flags.mark_flag_as_required('output_path')
+flags.mark_flag_as_required('proteins')
 
 _COLORS = {
     'blue': '\033[94m',
@@ -47,7 +54,7 @@ _COLORS = {
     'magenta': '\033[95m',
     'white': '\033[97m',
     'red': '\033[91m',
-    'endc': '\033[0m'
+    'endc': '\033[0m',
 }
 
 
@@ -56,30 +63,39 @@ def _parse_protein_str(protein_str: str) -> List:
 
 
 def argmax(a):
-  return max(range(len(a)), key=lambda x : a[x])
+  return max(range(len(a)), key=lambda x: a[x])
 
 
 def _get_ligand_folders(gs_path):
-  process = subprocess.run(f'gsutil ls -d {gs_path}',
-                             shell=True, capture_output=True, text=True)
+  process = subprocess.run(
+      f'gsutil ls -d {gs_path}', shell=True, capture_output=True, text=True
+  )
   ligands = [d.split('/')[-2] for d in process.stdout.split('\n') if d]
   return ligands
 
 
 def _copy_log_files(gs_path):
   # List all logs.
-  process = subprocess.run(f'gsutil ls gs://{gs_path}/ligand_*/abfe.*.INFO*',
-                             shell=True, capture_output=True, text=True)
+  process = subprocess.run(
+      f'gsutil ls gs://{gs_path}/ligand_*/abfe.*.INFO*',
+      shell=True,
+      capture_output=True,
+      text=True,
+  )
   log_files = [f for f in process.stdout.split('\n') if f]
-  
+
   # If empty just return empty dict.
   if len(log_files) < 1:
     return {}
 
   # Copy log files.
   temp_dir = tempfile.mkdtemp()
-  process = subprocess.run(f'gsutil -m cp gs://{gs_path}/ligand_*/abfe.*.INFO* {temp_dir}/',
-                             shell=True, capture_output=True, text=True)
+  process = subprocess.run(
+      f'gsutil -m cp gs://{gs_path}/ligand_*/abfe.*.INFO* {temp_dir}/',
+      shell=True,
+      capture_output=True,
+      text=True,
+  )
 
   # Create ligand -> log map.
   ligand_to_log = {}
@@ -98,7 +114,10 @@ def _copy_log_files(gs_path):
       ligand_to_log[ligand] = ligand_to_log[ligand][0]
     else:
       logs = ligand_to_log[ligand]
-      datetimes = [int(log.split('.INFO.')[-1].replace('-', '').replace('.', '')) for log in logs]
+      datetimes = [
+          int(log.split('.INFO.')[-1].replace('-', '').replace('.', ''))
+          for log in logs
+      ]
       idx_latest = argmax(datetimes)
       ligand_to_log[ligand] = logs[idx_latest]
 
@@ -108,7 +127,7 @@ def _copy_log_files(gs_path):
 def _job_is_completed(log_file):
   with open(log_file, 'r') as f:
     lines = f.readlines()
-  
+
   if 'Job completed' in lines[-1]:
     return True
   else:
@@ -133,7 +152,7 @@ def _get_abfe_stage_from_log(log_file):
 
   if 'Running equilibration' in lines:
     return 'equilibration'
-  
+
   if 'Running energy minimizations' in lines:
     return 'energy minimization'
 
@@ -154,18 +173,25 @@ def _get_stage_progress_from_log(log_file):
       num_tpr_run += 1
     if 'Running ' in line:
       if '[' in line:
-        num_tpr_total = line.split('[')[-1].split(']')[0]        
+        num_tpr_total = line.split('[')[-1].split(']')[0]
       break
 
   return f'{num_tpr_run}/{num_tpr_total}'
 
 
 def _get_running_and_pending_jobs(region='us-central1'):
-  
-  process = subprocess.run(f'gcloud ai custom-jobs list --project="abfe-364520" --region={region} --filter="state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING"',
-                             shell=True, capture_output=True, text=True)
+  process = subprocess.run(
+      (
+          'gcloud ai custom-jobs list --project="abfe-364520"'
+          f' --region={region} --filter="state=JOB_STATE_RUNNING OR'
+          ' state=JOB_STATE_PENDING"'
+      ),
+      shell=True,
+      capture_output=True,
+      text=True,
+  )
   jobs_info = process.stdout.split('---')
-  
+
   # Add '{protein}/{ligand}' to this list if job running.
   running_jobs = []
   pending_jobs = []
@@ -207,8 +233,10 @@ def main(argv):
   title = '> ' + _OUT_PATH.value + ' <'
   print(f'{title:^{s}}')
   print('=' * s)
-  print(f'{"Protein":<12}{"Ligand":<30}{"Job State":<15}{"ABFE Stage":<22}{"Progress"}')
-  
+  print(
+      f'{"Protein":<12}{"Ligand":<30}{"Job State":<15}{"ABFE Stage":<22}{"Progress"}'
+  )
+
   for protein in proteins:
     print('-' * s)
     gs_path_input = os.path.join(_INP_PATH.value, protein)
@@ -216,7 +244,7 @@ def main(argv):
 
     ligands = _get_ligand_folders(f'gs://{gs_path_input}/ligand_*/')
     ligand_to_log_dict, log_dir = _copy_log_files(gs_path_output)
-    
+
     for ligand in ligands:
       abfe_stage = ''
       progress = ''
@@ -244,6 +272,7 @@ def main(argv):
 
   print('=' * s)
   print()
+
 
 if __name__ == '__main__':
   app.run(main)
