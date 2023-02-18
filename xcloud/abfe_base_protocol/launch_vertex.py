@@ -49,12 +49,12 @@ Prerequisites:
 1) gcloud auth login
 2) gcloud auth configure-docker
 
-xmanager launch launch_multi_exp.py -- \
-  --xm_resource_alloc="user:xcloud/${USER}" \
-  --in_path="/gcs/path-to-inputs" \
-  --out_path="/gcs/output-folder/" \
-  --lig_ids=1,10 \
-  --noxm_gpu_sharing_opt_in
+xmanager launch launch_vertex -- \
+  --base_image="gcr.io/MY_PROJECT/PATH_TO_DOCKER_IMAGE"
+  --top_path="/GCS_PATH_TO_TOP_FILES" \
+  --mdp_path="/GCS_PATH_TO_MDP_FILES" \
+  --out_path="/GCS_OUTPUT_PATH" \
+  --lig_ids=1,10
 """
 
 from typing import List
