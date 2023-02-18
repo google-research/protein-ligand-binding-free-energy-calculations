@@ -48,24 +48,27 @@ from xmanager import xm
 from xmanager import xm_local
 from xmanager.contrib import gcs
 
-_GPU_TYPE = flags.DEFINE_string('gpu_type', 't4',
-                                'Which GPU type to use, e.g., t4, v100, a100.')
+_GPU_TYPE = flags.DEFINE_string(
+    'gpu_type', 't4', 'Which GPU type to use, e.g., t4, v100, a100.'
+)
 _REPLICAS = flags.DEFINE_integer('replicas', 1, 'Task replicas per job.')
 _EXP_NAME = flags.DEFINE_string(
-    'exp_name', 'abfe', 'Name of the experiment.', short_name='n')
+    'exp_name', 'abfe', 'Name of the experiment.', short_name='n'
+)
 _TPR_FILE = flags.DEFINE_string('tpr_file', None, 'tpr file')
 _NUM_CPU = flags.DEFINE_integer('num_cpu', 4, 'The number of CPUs.')
-_NUM_MPI = flags.DEFINE_integer('num_mpi', 1,
-                                'The number of thread-MPI processes.')
-_NUM_THREADS = flags.DEFINE_integer('num_threads', 4,
-                                    'The number of OpenMP threads.')
+_NUM_MPI = flags.DEFINE_integer(
+    'num_mpi', 1, 'The number of thread-MPI processes.'
+)
+_NUM_THREADS = flags.DEFINE_integer(
+    'num_threads', 4, 'The number of OpenMP threads.'
+)
 
 flags.adopt_module_key_flags(gcs)  # Registers flag --xm_gcs_path.
 
 
 def _gromacs_pkgs() -> xm.Packageable:
-  """Returns a contructed python container for running Gromacs simulations.
-  """
+  """Returns a contructed python container for running Gromacs simulations."""
   workdir = gcs.get_gcs_path_or_fail(_EXP_NAME.value)
   # Experiment expects output dir in '/gcs/...' format.
   # Might not needed: workdir = gcs.get_gcs_fuse_path(workdir)
@@ -79,7 +82,9 @@ def _gromacs_pkgs() -> xm.Packageable:
       xm.python_container(
           executor_spec=xm_local.Vertex.Spec(),
           args=executable_args,
-          base_image='gcr.io/abfe-364520/gromacs/gromacs-base:cuda-11.4-avx2_256',
+          base_image=(
+              'gcr.io/abfe-364520/gromacs/gromacs-base:cuda-11.4-avx2_256'
+          ),
           entrypoint=xm.ModuleName('codelab.main'),
           use_deep_module=True,
       )
@@ -96,12 +101,14 @@ def main(argv) -> None:
         'Performance might suffer.'
     )
 
-  with xm_local.create_experiment(experiment_title=_EXP_NAME.value) as experiment:
+  with xm_local.create_experiment(
+      experiment_title=_EXP_NAME.value
+  ) as experiment:
     [executable] = experiment.package(_gromacs_pkgs())
 
-    job_requirements = xm.JobRequirements({xm.GpuType[_GPU_TYPE.value]: 1},
-                                          cpu=_NUM_CPU.value,
-                                          ram=1 * xm.GiB)
+    job_requirements = xm.JobRequirements(
+        {xm.GpuType[_GPU_TYPE.value]: 1}, cpu=_NUM_CPU.value, ram=1 * xm.GiB
+    )
     executor = xm_local.Vertex(requirements=job_requirements)
     experiment.add(xm.Job(executable, executor))
 
