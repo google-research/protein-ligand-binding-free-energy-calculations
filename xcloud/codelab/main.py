@@ -1,4 +1,5 @@
 r"""The main program for running gromacs simulation with a TPR input.
+
 This module is simply for testing running gromacs with XCloud and it is subject
 to modification.
 """
@@ -16,24 +17,34 @@ import gmxapi as gmx
 from gmxapi import logger
 
 
-mdrun_logger = logger.getChild("mdrun")
+mdrun_logger = logger.getChild('mdrun')
 mdrun_logger.setLevel(DEBUG)
 
 
 _DATA_DIR = flags.DEFINE_string('data_dir', None, 'data directory')
 _TPR_FILE = flags.DEFINE_string('tpr_file', None, 'tpr file')
-_NUM_MPI = flags.DEFINE_integer('num_mpi', 1,
-                                'The number of thread-MPI processes.')
-_NUM_THREADS = flags.DEFINE_integer('num_threads', 4,
-                                    'The number of OpenMP threads.')
-_N_STEPS = flags.DEFINE_integer('n_steps', -2,
-                                'The number of simulations steps.')
-_UPDATE = flags.DEFINE_string('update', 'auto',
-                                'argument for mdrun -update flag; choices are "auto", "cpu", "gpu".')
-_PIN = flags.DEFINE_string('pin', 'auto',
-                                'argument for mdrun -pin flag; choices are "auto", "on", "off".')
-_REP_ID = flags.DEFINE_integer('replica_id', 0,
-    'Hyperparam that identifies the replica of this run.')
+_NUM_MPI = flags.DEFINE_integer(
+    'num_mpi', 1, 'The number of thread-MPI processes.'
+)
+_NUM_THREADS = flags.DEFINE_integer(
+    'num_threads', 4, 'The number of OpenMP threads.'
+)
+_N_STEPS = flags.DEFINE_integer(
+    'n_steps', -2, 'The number of simulations steps.'
+)
+_UPDATE = flags.DEFINE_string(
+    'update',
+    'auto',
+    'argument for mdrun -update flag; choices are "auto", "cpu", "gpu".',
+)
+_PIN = flags.DEFINE_string(
+    'pin',
+    'auto',
+    'argument for mdrun -pin flag; choices are "auto", "on", "off".',
+)
+_REP_ID = flags.DEFINE_integer(
+    'replica_id', 0, 'Hyperparam that identifies the replica of this run.'
+)
 
 
 def main(_):
@@ -48,6 +59,7 @@ def main(_):
   def operation_id(self):
     # pylint: disable=protected-access
     return f'{self._base_operation_id}_{_SESSION_ID}'
+
   gmx.operation.ResourceManager.operation_id = property(operation_id)
 
   logging.info('Job started.')
@@ -76,7 +88,8 @@ def main(_):
           '-ntomp': str(_NUM_THREADS.value),
           '-pin': _PIN.value,
           '-nsteps': str(_N_STEPS.value),
-      })
+      },
+  )
 
   md.run()
   logging.info('Job finished.')
